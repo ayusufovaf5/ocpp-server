@@ -9,7 +9,9 @@ import db as db_module
 from config import get_settings
 from logging_config import configure_logging
 from ocpp16.handler import Ocpp16Handler
+from services.charger_service import ChargerService
 from tasks.heartbeat_monitor import run_heartbeat_monitor
+from tasks.offline_session_monitor import run_offline_session_monitor
 
 logger = structlog.get_logger(__name__)
 
@@ -18,16 +20,18 @@ logger = structlog.get_logger(__name__)
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     configure_logging(settings.log_level, settings.log_format)
-    monitor = asyncio.create_task(run_heartbeat_monitor())
+    heartbeat = asyncio.create_task(run_heartbeat_monitor())
+    offline = asyncio.create_task(run_offline_session_monitor())
     logger.info("ocpp16.startup", port=settings.ocpp16_port)
     try:
         yield
     finally:
-        monitor.cancel()
-        try:
-            await monitor
-        except asyncio.CancelledError:
-            pass
+        for task in (heartbeat, offline):
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
         logger.info("ocpp16.shutdown")
 
 
@@ -45,6 +49,8 @@ def create_ocpp_app() -> FastAPI:
         if "ocpp1.6" in (websocket.headers.get("sec-websocket-protocol") or ""):
             subprotocol = "ocpp1.6"
         await websocket.accept(subprotocol=subprotocol)
+        async with db_module.async_session_factory() as db:
+            await ChargerService(db).clear_disconnected(charge_point_id)
         logger.info("ocpp16.connected", charge_point_id=charge_point_id)
         try:
             while True:
@@ -54,9 +60,19 @@ def create_ocpp_app() -> FastAPI:
                     response = await handler.handle_raw(raw)
                 await websocket.send_text(response)
         except WebSocketDisconnect:
+            async with db_module.async_session_factory() as db:
+                await ChargerService(db).mark_disconnected(charge_point_id)
             logger.info("ocpp16.disconnected", charge_point_id=charge_point_id)
         except Exception:
             logger.exception("ocpp16.connection_error", charge_point_id=charge_point_id)
+            try:
+                async with db_module.async_session_factory() as db:
+                    await ChargerService(db).mark_disconnected(charge_point_id)
+            except Exception:
+                logger.exception(
+                    "ocpp16.mark_disconnected_failed",
+                    charge_point_id=charge_point_id,
+                )
             await websocket.close()
 
     return app

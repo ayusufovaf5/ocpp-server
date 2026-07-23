@@ -48,14 +48,14 @@ class SessionRepository:
         )
         return result.scalar_one_or_none()
 
-    async def get_any_active_by_charger(self, charger_id: int) -> ChargingSession | None:
+    async def list_active_by_charger(self, charger_id: int) -> list[ChargingSession]:
         result = await self._db.execute(
             select(ChargingSession).where(
                 ChargingSession.charger_id == charger_id,
                 ChargingSession.status == "Active",
             )
         )
-        return result.scalar_one_or_none()
+        return list(result.scalars().all())
 
     async def get_by_ocpp_transaction_id(
         self,
@@ -68,15 +68,28 @@ class SessionRepository:
         )
         return result.scalar_one_or_none()
 
+    async def latest_meter_value(self, session_id: int) -> MeterValue | None:
+        result = await self._db.execute(
+            select(MeterValue)
+            .where(MeterValue.session_id == session_id)
+            .order_by(MeterValue.timestamp.desc(), MeterValue.id.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
     async def stop(
         self,
         charging_session: ChargingSession,
         *,
         stopped_at: datetime,
         meter_stop: int | None,
+        end_reason: str | None = "station_stop",
+        meter_stop_estimated: bool = False,
     ) -> ChargingSession:
         charging_session.stopped_at = stopped_at
         charging_session.meter_stop = meter_stop
+        charging_session.meter_stop_estimated = meter_stop_estimated
+        charging_session.end_reason = end_reason
         charging_session.status = "Completed"
         await self._db.flush()
         return charging_session

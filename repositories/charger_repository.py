@@ -75,6 +75,31 @@ class ChargerRepository:
         await self._db.flush()
         return charger
 
+    async def mark_disconnected(self, charge_point_id: str, now: datetime) -> Charger | None:
+        charger = await self.get_by_charge_point_id(charge_point_id)
+        if charger is None:
+            return None
+        charger.disconnected_at = now
+        await self._db.flush()
+        return charger
+
+    async def clear_disconnected(self, charge_point_id: str) -> Charger | None:
+        charger = await self.get_by_charge_point_id(charge_point_id)
+        if charger is None:
+            return None
+        charger.disconnected_at = None
+        await self._db.flush()
+        return charger
+
+    async def list_disconnected_before(self, *, before: datetime) -> list[Charger]:
+        result = await self._db.execute(
+            select(Charger).where(
+                Charger.disconnected_at.is_not(None),
+                Charger.disconnected_at < before,
+            )
+        )
+        return list(result.scalars().all())
+
     async def mark_stale_unavailable(self, *, older_than: datetime) -> int:
         result = await self._db.execute(
             update(Charger)

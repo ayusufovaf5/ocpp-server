@@ -30,6 +30,10 @@ class Settings(BaseSettings):
         default=30,
         alias="HEARTBEAT_CHECK_INTERVAL_SECONDS",
     )
+    offline_session_grace_period_seconds: int = Field(
+        default=300,
+        alias="OFFLINE_SESSION_GRACE_PERIOD_SECONDS",
+    )
 
     app_name: str = "opencpo-core"
     app_version: str = "0.2.0"

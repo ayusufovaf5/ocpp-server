@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     Float,
     ForeignKey,
@@ -27,6 +28,7 @@ class Charger(Base):
     status: Mapped[str] = mapped_column(String(64), nullable=False, default="Unknown")
     connector_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     last_heartbeat: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    disconnected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -80,10 +82,16 @@ class ChargingSession(Base):
     stopped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     meter_start: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     meter_stop: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    meter_stop_estimated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    end_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(64), nullable=False, default="Active")
 
     charger: Mapped[Charger] = relationship(back_populates="sessions")
     meter_values: Mapped[list["MeterValue"]] = relationship(back_populates="session")
+
+    @property
+    def effective_end_reason(self) -> str:
+        return self.end_reason or "station_stop"
 
 
 class MeterValue(Base):

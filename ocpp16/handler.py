@@ -181,10 +181,16 @@ class Ocpp16Handler:
 
     async def _stop_transaction(self, payload: dict[str, Any]) -> dict[str, Any]:
         req = StopTransactionReq.model_validate(payload)
+        transaction_data = None
+        if req.transaction_data:
+            transaction_data = [
+                mv.model_dump(by_alias=True) for mv in req.transaction_data
+            ]
         await self._sessions.stop_transaction(
             charge_point_id=self.charge_point_id,
             transaction_id=req.transaction_id,
             meter_stop=req.meter_stop,
             timestamp=req.timestamp,
+            transaction_data=transaction_data,
         )
         return dump_ocpp(StopTransactionConf())

@@ -302,7 +302,7 @@ async def test_stop_unknown_transaction_id_with_no_active_session_returns_empty_
 
 
 @pytest.mark.asyncio
-async def test_stop_unknown_transaction_id_fallback_closes_any_active_session(
+async def test_stop_unknown_transaction_id_does_not_close_active_session(
     db_session,
 ) -> None:
     chargers = ChargerService(db_session)
@@ -337,6 +337,6 @@ async def test_stop_unknown_transaction_id_fallback_closes_any_active_session(
     assert payload == {}
 
     await db_session.refresh(active)
-    assert active.status == "Completed"
-    assert active.meter_stop == 50
+    assert active.status == "Active"
+    assert active.meter_stop is None
     assert active.ocpp_transaction_id == real_tx

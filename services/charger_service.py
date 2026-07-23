@@ -134,6 +134,24 @@ class ChargerService:
             await self._db.rollback()
             raise
 
+    async def mark_disconnected(self, charge_point_id: str) -> Charger | None:
+        try:
+            charger = await self._repo.mark_disconnected(charge_point_id, utc_now())
+            await self._db.commit()
+            return charger
+        except Exception:
+            await self._db.rollback()
+            raise
+
+    async def clear_disconnected(self, charge_point_id: str) -> Charger | None:
+        try:
+            charger = await self._repo.clear_disconnected(charge_point_id)
+            await self._db.commit()
+            return charger
+        except Exception:
+            await self._db.rollback()
+            raise
+
     async def get(self, charge_point_id: str) -> Charger | None:
         return await self._repo.get_by_charge_point_id(charge_point_id)
 
