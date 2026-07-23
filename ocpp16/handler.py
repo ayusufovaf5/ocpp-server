@@ -26,15 +26,17 @@ from ocpp16.messages import (
     utc_now_iso,
 )
 from services.charger_service import ChargerService
-from services.errors import UnknownChargerError, UnsupportedActionError
+from services.errors import (
+    MissingOcppTransactionIdError,
+    UnknownChargerError,
+    UnsupportedActionError,
+)
 from services.session_service import SessionService
 
 logger = structlog.get_logger(__name__)
 
 
 class Ocpp16Handler:
-    """Maps OCPP actions to services. No business rules here."""
-
     def __init__(self, charge_point_id: str, db: AsyncSession) -> None:
         self.charge_point_id = charge_point_id
         self._chargers = ChargerService(db)
@@ -73,6 +75,17 @@ class Ocpp16Handler:
                 unique_id,
                 "InternalError",
                 "Charge point is not registered; send BootNotification first",
+            )
+        except MissingOcppTransactionIdError as exc:
+            logger.error(
+                "ocpp.missing_transaction_id",
+                charge_point_id=self.charge_point_id,
+                session_id=exc.session_id,
+            )
+            return protocol.call_error(
+                unique_id,
+                "InternalError",
+                "StartTransaction did not assign ocpp_transaction_id",
             )
         except Exception:
             logger.exception(
@@ -139,7 +152,8 @@ class Ocpp16Handler:
             meter_start=req.meter_start,
             timestamp=req.timestamp,
         )
-        assert charging.ocpp_transaction_id is not None
+        if charging.ocpp_transaction_id is None:
+            raise MissingOcppTransactionIdError(session_id=charging.id)
         return dump_ocpp(
             StartTransactionConf(
                 transactionId=charging.ocpp_transaction_id,

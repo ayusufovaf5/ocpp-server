@@ -1,3 +1,5 @@
+import structlog
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import ChargingSession, MeterValue
@@ -6,6 +8,8 @@ from repositories.charger_repository import ChargerRepository
 from repositories.session_repository import SessionRepository
 from services.errors import UnknownChargerError
 from services.status import normalize_meter_sample
+
+logger = structlog.get_logger(__name__)
 
 
 class SessionService:
@@ -34,17 +38,27 @@ class SessionService:
             if existing is not None:
                 return existing
 
-            row = await self._sessions.create(
-                charger_id=charger.id,
-                connector_id=connector_id,
-                id_tag=id_tag,
-                started_at=parse_ocpp_time(timestamp),
-                meter_start=int(meter_start),
-            )
-            await self._chargers.set_status(charge_point_id, "Charging", now=utc_now())
-            await self._db.commit()
-            await self._db.refresh(row)
-            return row
+            charger_id = charger.id
+            try:
+                row = await self._sessions.create(
+                    charger_id=charger_id,
+                    connector_id=connector_id,
+                    id_tag=id_tag,
+                    started_at=parse_ocpp_time(timestamp),
+                    meter_start=int(meter_start),
+                )
+                await self._chargers.set_status(charge_point_id, "Charging", now=utc_now())
+                await self._db.commit()
+                await self._db.refresh(row)
+                return row
+            except IntegrityError:
+                await self._db.rollback()
+                raced = await self._sessions.get_active_by_charger_connector(
+                    charger_id, connector_id
+                )
+                if raced is not None:
+                    return raced
+                raise
         except Exception:
             await self._db.rollback()
             raise
@@ -60,6 +74,11 @@ class SessionService:
         try:
             row = await self._sessions.get_by_ocpp_transaction_id(transaction_id)
             if row is None:
+                logger.warning(
+                    "ocpp.stop_unknown_transaction_id",
+                    charge_point_id=charge_point_id,
+                    transaction_id=transaction_id,
+                )
                 charger = await self._chargers.get_by_charge_point_id(charge_point_id)
                 if charger is None:
                     return None
@@ -91,6 +110,13 @@ class SessionService:
         try:
             charger = await self._chargers.get_by_charge_point_id(charge_point_id)
             if charger is None:
+                logger.warning(
+                    "ocpp.meter_values_without_active_session",
+                    charge_point_id=charge_point_id,
+                    connector_id=connector_id,
+                    transaction_id=transaction_id,
+                    meter_value=meter_value,
+                )
                 return []
 
             charging: ChargingSession | None = None
@@ -101,6 +127,13 @@ class SessionService:
                     charger.id, connector_id
                 )
             if charging is None or charging.status != "Active":
+                logger.warning(
+                    "ocpp.meter_values_without_active_session",
+                    charge_point_id=charge_point_id,
+                    connector_id=connector_id,
+                    transaction_id=transaction_id,
+                    meter_value=meter_value,
+                )
                 return []
 
             created: list[MeterValue] = []

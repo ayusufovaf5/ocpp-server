@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, func
+from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, func, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from db import Base
@@ -28,6 +28,16 @@ class Charger(Base):
 
 class ChargingSession(Base):
     __tablename__ = "sessions"
+    __table_args__ = (
+        Index(
+            "uq_sessions_active_charger_connector",
+            "charger_id",
+            "connector_id",
+            unique=True,
+            postgresql_where=text("status = 'Active'"),
+            sqlite_where=text("status = 'Active'"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     charger_id: Mapped[int] = mapped_column(ForeignKey("chargers.id"), nullable=False)

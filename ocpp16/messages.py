@@ -32,8 +32,8 @@ class CamelModel(BaseModel):
 
 
 class BootNotificationReq(CamelModel):
-    charge_point_vendor: str = Field(alias="chargePointVendor")
-    charge_point_model: str = Field(alias="chargePointModel")
+    charge_point_vendor: str = Field(alias="chargePointVendor", max_length=255)
+    charge_point_model: str = Field(alias="chargePointModel", max_length=255)
     charge_point_serial_number: str | None = Field(default=None, alias="chargePointSerialNumber")
     charge_box_serial_number: str | None = Field(default=None, alias="chargeBoxSerialNumber")
     firmware_version: str | None = Field(default=None, alias="firmwareVersion")
@@ -72,7 +72,7 @@ class StatusNotificationConf(CamelModel):
 
 
 class AuthorizeReq(CamelModel):
-    id_tag: str = Field(alias="idTag")
+    id_tag: str = Field(alias="idTag", max_length=255)
 
 
 class IdTagInfo(CamelModel):
@@ -87,7 +87,7 @@ class AuthorizeConf(CamelModel):
 
 class StartTransactionReq(CamelModel):
     connector_id: int = Field(alias="connectorId")
-    id_tag: str = Field(alias="idTag")
+    id_tag: str = Field(alias="idTag", max_length=255)
     meter_start: int = Field(alias="meterStart")
     timestamp: str
     reservation_id: int | None = Field(default=None, alias="reservationId")
@@ -128,7 +128,7 @@ class StopTransactionReq(CamelModel):
     timestamp: str
     transaction_id: int = Field(alias="transactionId")
     reason: str | None = None
-    id_tag: str | None = Field(default=None, alias="idTag")
+    id_tag: str | None = Field(default=None, alias="idTag", max_length=255)
     transaction_data: list[OcppMeterValue] | None = Field(default=None, alias="transactionData")
 
 

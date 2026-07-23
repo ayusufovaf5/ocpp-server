@@ -1,9 +1,12 @@
+import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import Charger
 from db.time import seconds_ago, utc_now
 from repositories.charger_repository import ChargerRepository
 from services.status import normalize_connector_status
+
+logger = structlog.get_logger(__name__)
 
 
 class ChargerService:
@@ -38,6 +41,11 @@ class ChargerService:
     async def heartbeat(self, charge_point_id: str) -> Charger | None:
         try:
             charger = await self._repo.touch_heartbeat(charge_point_id, utc_now())
+            if charger is None:
+                logger.warning(
+                    "ocpp.heartbeat_unknown_charge_point",
+                    charge_point_id=charge_point_id,
+                )
             await self._db.commit()
             return charger
         except Exception:
@@ -51,6 +59,12 @@ class ChargerService:
                 normalize_connector_status(status),
                 now=utc_now(),
             )
+            if charger is None:
+                logger.warning(
+                    "ocpp.status_notification_unknown_charge_point",
+                    charge_point_id=charge_point_id,
+                    status=status,
+                )
             await self._db.commit()
             return charger
         except Exception:

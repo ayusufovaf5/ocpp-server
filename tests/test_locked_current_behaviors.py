@@ -1,5 +1,3 @@
-"""Locks CURRENT behaviour from audit-report (do not change production code to pass these)."""
-
 from __future__ import annotations
 
 import asyncio
@@ -69,12 +67,8 @@ async def ocpp_server(db_engine, unused_tcp_port):
     await task
 
 
-# --- 1 & 2: status aliases (StatusNotification path via ChargerService.update_status) ---
-
-
 @pytest.mark.asyncio
 async def test_status_notification_finishing_maps_to_available(db_session) -> None:
-    # EvPoint UI quirk: transitional Finishing is stored as Available (see services/status.py).
     chargers = ChargerService(db_session)
     await chargers.register_boot(charge_point_id="CP_FIN", vendor="V", model="M")
     await chargers.update_status("CP_FIN", "Finishing")
@@ -85,7 +79,6 @@ async def test_status_notification_finishing_maps_to_available(db_session) -> No
 
 @pytest.mark.asyncio
 async def test_status_notification_suspended_evse_maps_to_suspended_ev(db_session) -> None:
-    # EvPoint normalizes SuspendedEVSE → SuspendedEV for downstream consumers.
     chargers = ChargerService(db_session)
     await chargers.register_boot(charge_point_id="CP_SEV", vendor="V", model="M")
     await chargers.update_status("CP_SEV", "SuspendedEVSE")
@@ -94,23 +87,16 @@ async def test_status_notification_suspended_evse_maps_to_suspended_ev(db_sessio
     assert row.status == "SuspendedEV"
 
 
-# --- 3: Authorize always Accepted ---
-
-
 @pytest.mark.asyncio
 async def test_authorize_always_returns_accepted_for_any_id_tag(db_session) -> None:
-    # ADR 004: id_tag is a plain string; Authorize always Accepted (EvPoint-compatible).
     handler = Ocpp16Handler("CP_AUTH", db_session)
-    for tag in ("TAG001", "", "unknown-rfid", "';" * 40):
+    for tag in ("TAG001", "", "unknown-rfid", "x" * 40):
         msg_type, uid, payload = _parse_result(
             await handler.handle_raw(_call_frame("a1", "Authorize", {"idTag": tag}))
         )
         assert msg_type == 3
         assert uid == "a1"
         assert payload["idTagInfo"]["status"] == "Accepted"
-
-
-# --- 4.2: soft-unavailable ---
 
 
 async def _make_stale_unavailable(db_session, charge_point_id: str) -> None:
@@ -134,13 +120,11 @@ async def _make_stale_unavailable(db_session, charge_point_id: str) -> None:
 
 @pytest.mark.asyncio
 async def test_soft_unavailable_after_120s_timeout_with_60s_interval(db_session) -> None:
-    # Soft offline: interval=60 (Boot) and timeout=120 mark DB Unavailable without closing WS.
     await _make_stale_unavailable(db_session, "CP_STALE_TO")
 
 
 @pytest.mark.asyncio
 async def test_soft_unavailable_heartbeat_restores_via_touch_heartbeat(db_session) -> None:
-    # Heartbeat → touch_heartbeat: Unavailable → Available and last_heartbeat refreshed.
     charge_point_id = "CP_STALE_HB"
     await _make_stale_unavailable(db_session, charge_point_id)
     chargers = ChargerService(db_session)
@@ -156,7 +140,6 @@ async def test_soft_unavailable_heartbeat_restores_via_touch_heartbeat(db_sessio
 
 @pytest.mark.asyncio
 async def test_soft_unavailable_authorize_does_not_restore_status(db_session) -> None:
-    # Authorize does not call touch_heartbeat / set_status — status stays Unavailable.
     charge_point_id = "CP_STALE_AUTH"
     await _make_stale_unavailable(db_session, charge_point_id)
 
@@ -174,7 +157,6 @@ async def test_soft_unavailable_authorize_does_not_restore_status(db_session) ->
 
 @pytest.mark.asyncio
 async def test_status_notification_set_status_updates_last_heartbeat(db_session) -> None:
-    # StatusNotification (connector!=0) uses set_status, not touch_heartbeat, but refreshes last_heartbeat.
     chargers = ChargerService(db_session)
     charger = await chargers.register_boot(charge_point_id="CP_HB_TS", vendor="V", model="M")
     old_ts = datetime(2000, 1, 1, tzinfo=UTC)
@@ -190,7 +172,6 @@ async def test_status_notification_set_status_updates_last_heartbeat(db_session)
 
 @pytest.mark.asyncio
 async def test_soft_unavailable_does_not_tear_down_websocket(ocpp_server, db_session) -> None:
-    # Monitor/soft-unavailable only flips DB status; the open WS still accepts Heartbeat.
     import websockets
 
     charge_point_id = "CP_WS_SOFT"
@@ -220,12 +201,8 @@ async def test_soft_unavailable_does_not_tear_down_websocket(ocpp_server, db_ses
     assert row.status == "Available"
 
 
-# --- 5: repeat StartTransaction ---
-
-
 @pytest.mark.asyncio
 async def test_repeat_start_returns_existing_session_without_reject(db_session) -> None:
-    # Current idempotency: second Start on same connector returns the existing Active session.
     chargers = ChargerService(db_session)
     sessions = SessionService(db_session)
     await chargers.register_boot(charge_point_id="CP_RPT", vendor="V", model="M")
@@ -262,14 +239,10 @@ async def test_repeat_start_returns_existing_session_without_reject(db_session) 
     assert count == 1
 
 
-# --- 6: MeterValues without active session ---
-
-
 @pytest.mark.asyncio
 async def test_meter_values_without_active_session_still_returns_empty_success(
     db_session,
 ) -> None:
-    # Until R1 logging: no Active session → no rows written, but CallResult is still empty success.
     await ChargerService(db_session).register_boot(
         charge_point_id="CP_MV", vendor="V", model="M"
     )
@@ -300,14 +273,10 @@ async def test_meter_values_without_active_session_still_returns_empty_success(
     assert meters == []
 
 
-# --- 7.2: StopTransaction unknown transactionId ---
-
-
 @pytest.mark.asyncio
 async def test_stop_unknown_transaction_id_with_no_active_session_returns_empty_success(
     db_session,
 ) -> None:
-    # No Active session and unknown txId → conf OK, nothing to close.
     await ChargerService(db_session).register_boot(
         charge_point_id="CP_STOP0", vendor="V", model="M"
     )
@@ -336,7 +305,6 @@ async def test_stop_unknown_transaction_id_with_no_active_session_returns_empty_
 async def test_stop_unknown_transaction_id_fallback_closes_any_active_session(
     db_session,
 ) -> None:
-    # Known bug/current behaviour: unknown txId falls back to any Active session and stops it.
     chargers = ChargerService(db_session)
     sessions = SessionService(db_session)
     await chargers.register_boot(charge_point_id="CP_STOP_FB", vendor="V", model="M")

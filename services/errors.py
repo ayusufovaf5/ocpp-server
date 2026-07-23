@@ -8,3 +8,9 @@ class UnsupportedActionError(Exception):
     def __init__(self, action: str) -> None:
         self.action = action
         super().__init__(f"Unsupported action: {action}")
+
+
+class MissingOcppTransactionIdError(Exception):
+    def __init__(self, session_id: int) -> None:
+        self.session_id = session_id
+        super().__init__(f"Session {session_id} has no ocpp_transaction_id")
