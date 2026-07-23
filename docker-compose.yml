@@ -1,0 +1,40 @@
+services:
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    environment:
+      POSTGRES_USER: opencpo
+      POSTGRES_PASSWORD: opencpo
+      POSTGRES_DB: opencpo
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U opencpo -d opencpo"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    ports:
+      - "${API_PORT:-8000}:8000"
+    environment:
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      PG_HOST: postgres
+      PG_PORT: 5432
+      PG_USER: opencpo
+      PG_PASSWORD: opencpo
+      PG_DATABASE: opencpo
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn main:app --host 0.0.0.0 --port 8000"
+
+volumes:
+  postgres_data:
