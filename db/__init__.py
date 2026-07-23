@@ -32,14 +32,3 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
             yield session
         finally:
             await session.close()
-
-
-async def check_db_connection() -> bool:
-    from sqlalchemy import text
-
-    try:
-        async with engine.connect() as conn:
-            await conn.execute(text("SELECT 1"))
-        return True
-    except Exception:
-        return False

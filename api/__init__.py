@@ -10,9 +10,9 @@ router = APIRouter()
 
 
 @router.get("/health")
-async def health(session: AsyncSession = Depends(get_db_session)) -> JSONResponse:
+async def health(db: AsyncSession = Depends(get_db_session)) -> JSONResponse:
     try:
-        await session.execute(text("SELECT 1"))
+        await db.execute(text("SELECT 1"))
         db_ok = True
     except Exception:
         db_ok = False

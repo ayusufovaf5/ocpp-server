@@ -4,8 +4,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from db import get_db_session
+import db as db_module
+from db import Base, get_db_session
 from main import create_app
 
 
@@ -28,3 +30,34 @@ async def client(app) -> AsyncGenerator[AsyncClient, None]:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
+
+
+@pytest.fixture
+def unused_tcp_port() -> int:
+    import socket
+
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+@pytest.fixture
+async def db_engine(monkeypatch):
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    monkeypatch.setattr(db_module, "engine", engine)
+    monkeypatch.setattr(db_module, "async_session_factory", session_factory)
+
+    yield engine
+
+    await engine.dispose()
+
+
+@pytest.fixture
+async def db_session(db_engine) -> AsyncGenerator[AsyncSession, None]:
+    async with db_module.async_session_factory() as session:
+        yield session

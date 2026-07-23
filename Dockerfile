@@ -11,6 +11,10 @@ COPY pyproject.toml README.md ./
 COPY config.py main.py logging_config.py ./
 COPY api ./api
 COPY db ./db
+COPY services ./services
+COPY repositories ./repositories
+COPY ocpp16 ./ocpp16
+COPY tasks ./tasks
 COPY migrations ./migrations
 COPY alembic.ini ./
 
@@ -32,6 +36,6 @@ COPY --from=builder /build /app
 
 USER appuser
 
-EXPOSE 8000
+EXPOSE 8000 9000
 
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -1,9 +1,24 @@
+x-app-env: &app-env
+  API_HOST: 0.0.0.0
+  API_PORT: 8000
+  OCPP16_PORT: 9000
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  LOG_FORMAT: ${LOG_FORMAT:-json}
+  PG_HOST: postgres
+  PG_PORT: 5432
+  PG_USER: opencpo
+  PG_PASSWORD: ocpp123
+  PG_DATABASE: opencpo
+  OCPP_HEARTBEAT_INTERVAL: 60
+  HEARTBEAT_TIMEOUT_SECONDS: 120
+  HEARTBEAT_CHECK_INTERVAL_SECONDS: 30
+
 services:
   postgres:
-    image: timescale/timescaledb:latest-pg16
+    image: postgres:16
     environment:
       POSTGRES_USER: opencpo
-      POSTGRES_PASSWORD: opencpo
+      POSTGRES_PASSWORD: ocpp123
       POSTGRES_DB: opencpo
     ports:
       - "5432:5432"
@@ -15,26 +30,37 @@ services:
       timeout: 5s
       retries: 10
 
-  app:
+  migrate:
+    build: .
+    environment:
+      <<: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+
+  api:
     build: .
     ports:
       - "${API_PORT:-8000}:8000"
     environment:
-      API_HOST: 0.0.0.0
-      API_PORT: 8000
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      LOG_FORMAT: ${LOG_FORMAT:-json}
-      PG_HOST: postgres
-      PG_PORT: 5432
-      PG_USER: opencpo
-      PG_PASSWORD: opencpo
-      PG_DATABASE: opencpo
+      <<: *app-env
     depends_on:
-      postgres:
-        condition: service_healthy
-    command: >
-      sh -c "alembic upgrade head &&
-             uvicorn main:app --host 0.0.0.0 --port 8000"
+      migrate:
+        condition: service_completed_successfully
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+  ocpp16:
+    build: .
+    ports:
+      - "${OCPP16_PORT:-9000}:9000"
+    environment:
+      <<: *app-env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command: ["uvicorn", "ocpp16.app:app", "--host", "0.0.0.0", "--port", "9000"]
 
 volumes:
   postgres_data:
