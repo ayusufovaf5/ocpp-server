@@ -134,9 +134,17 @@ class Ocpp16Handler:
     async def _status_notification(self, payload: dict[str, Any]) -> dict[str, Any]:
         req = StatusNotificationReq.model_validate(payload)
         if req.connector_id != 0:
-            await self._chargers.update_status(self.charge_point_id, req.status)
+            await self._chargers.update_status(
+                self.charge_point_id,
+                req.status,
+                connector_id=req.connector_id,
+            )
         else:
-            await self._chargers.heartbeat(self.charge_point_id)
+            await self._chargers.heartbeat(
+                self.charge_point_id,
+                connector_id=req.connector_id,
+                status=req.status,
+            )
         return dump_ocpp(StatusNotificationConf())
 
     async def _authorize(self, payload: dict[str, Any]) -> dict[str, Any]:

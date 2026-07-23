@@ -1,6 +1,16 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, func, text
+from sqlalchemy import (
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from db import Base
@@ -24,6 +34,28 @@ class Charger(Base):
     )
 
     sessions: Mapped[list["ChargingSession"]] = relationship(back_populates="charger")
+    connector_statuses: Mapped[list["ConnectorStatus"]] = relationship(
+        back_populates="charger"
+    )
+
+
+class ConnectorStatus(Base):
+    __tablename__ = "connector_status"
+    __table_args__ = (
+        UniqueConstraint(
+            "charger_id",
+            "connector_id",
+            name="uq_connector_status_charger_connector",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    charger_id: Mapped[int] = mapped_column(ForeignKey("chargers.id"), nullable=False)
+    connector_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(64), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    charger: Mapped[Charger] = relationship(back_populates="connector_statuses")
 
 
 class ChargingSession(Base):

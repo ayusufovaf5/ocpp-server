@@ -18,7 +18,7 @@ Charge Point ──WS──► ocpp16/     (protocol + mapping)
                          ▼
                        db/       (models + engine)
 
-REST clients ──HTTP──► api/  (/health, /version)
+REST clients ──HTTP──► api/  (/health, /version, /chargers/{id}/status)
 ```
 
 | Process | Port | Role |
@@ -58,6 +58,7 @@ docker compose up --build
 ```
 
 - REST: http://localhost:8000/health  
+- Charger status: http://localhost:8000/chargers/{charge_point_id}/status  
 - OCPP: ws://localhost:9000/ocpp/CP_1  
 
 Local dev (tests / lint):

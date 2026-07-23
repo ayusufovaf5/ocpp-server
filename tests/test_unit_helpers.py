@@ -3,7 +3,11 @@ import json
 import pytest
 
 from ocpp16 import protocol
-from services.status import normalize_connector_status, normalize_meter_sample
+from services.status import (
+    aggregate_station_status,
+    normalize_connector_status,
+    normalize_meter_sample,
+)
 
 
 def test_parse_call_frame() -> None:
@@ -38,6 +42,25 @@ def test_call_result_and_error_shapes() -> None:
 )
 def test_normalize_connector_status(status: str, expected: str) -> None:
     assert normalize_connector_status(status) == expected
+
+
+@pytest.mark.parametrize(
+    ("statuses", "expected"),
+    [
+        ([], None),
+        (["Available"], "Available"),
+        (["Unavailable"], "Unavailable"),
+        (["Available", "Unavailable"], "Available"),
+        (["Available", "Preparing"], "Preparing"),
+        (["Charging", "Available"], "Charging"),
+        (["Preparing", "Faulted"], "Faulted"),
+        (["SuspendedEV", "Preparing"], "SuspendedEV"),
+    ],
+)
+def test_aggregate_station_status(
+    statuses: list[str], expected: str | None
+) -> None:
+    assert aggregate_station_status(statuses) == expected
 
 
 @pytest.mark.parametrize(
