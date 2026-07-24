@@ -12,6 +12,8 @@ from config import DEV_API_KEY, get_settings
 from db import Base, get_db_session
 from events.publisher import EventPublisher, set_publisher
 from main import create_app
+from ocpp16.protocol import clear_pending_outbound
+from state.connection_registry import ConnectionRegistry, set_connection_registry
 from state.connection_state import ConnectionState, set_connection_state
 from state.redis_client import set_redis
 
@@ -21,6 +23,15 @@ def _clear_settings_cache():
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _reset_connection_registry():
+    set_connection_registry(ConnectionRegistry())
+    clear_pending_outbound()
+    yield
+    clear_pending_outbound()
+    set_connection_registry(None)
 
 
 @pytest.fixture(autouse=True)

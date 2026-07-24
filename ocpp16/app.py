@@ -10,8 +10,11 @@ from auth import is_charge_point_allowed, log_dev_auth_warnings
 from config import get_settings
 from events.logging_consumer import LoggingConsumer
 from logging_config import configure_logging
+from ocpp16 import protocol
 from ocpp16.handler import Ocpp16Handler
 from services.charger_service import ChargerService
+from services.errors import ChargerOfflineError
+from state.connection_registry import get_connection_registry
 from tasks.heartbeat_monitor import run_heartbeat_monitor
 from tasks.offline_session_monitor import run_offline_session_monitor
 
@@ -67,22 +70,49 @@ def create_ocpp_app() -> FastAPI:
         if "ocpp1.6" in (websocket.headers.get("sec-websocket-protocol") or ""):
             subprotocol = "ocpp1.6"
         await websocket.accept(subprotocol=subprotocol)
+        registry = get_connection_registry()
+        registry.register(charge_point_id, websocket)
         async with db_module.async_session_factory() as db:
             await ChargerService(db).clear_disconnected(charge_point_id)
         logger.info("ocpp16.connected", charge_point_id=charge_point_id)
         try:
             while True:
                 raw = await websocket.receive_text()
+                try:
+                    message_type, unique_id, _action, payload = protocol.parse_frame(raw)
+                except (ValueError, TypeError):
+                    await websocket.send_text(
+                        protocol.call_error("0", "FormationViolation", "Invalid OCPP-J frame")
+                    )
+                    continue
+
+                if message_type in (
+                    protocol.MessageType.CALLRESULT,
+                    protocol.MessageType.CALLERROR,
+                ):
+                    protocol.resolve_outbound_response(unique_id, message_type, payload)
+                    continue
+
                 async with db_module.async_session_factory() as db:
                     handler = Ocpp16Handler(charge_point_id, db)
                     response = await handler.handle_raw(raw)
                 await websocket.send_text(response)
         except WebSocketDisconnect:
+            protocol.fail_pending_for_charge_point(
+                charge_point_id,
+                ChargerOfflineError(charge_point_id),
+            )
+            registry.unregister(charge_point_id, websocket)
             async with db_module.async_session_factory() as db:
                 await ChargerService(db).mark_disconnected(charge_point_id)
             logger.info("ocpp16.disconnected", charge_point_id=charge_point_id)
         except Exception:
             logger.exception("ocpp16.connection_error", charge_point_id=charge_point_id)
+            protocol.fail_pending_for_charge_point(
+                charge_point_id,
+                ChargerOfflineError(charge_point_id),
+            )
+            registry.unregister(charge_point_id, websocket)
             try:
                 async with db_module.async_session_factory() as db:
                     await ChargerService(db).mark_disconnected(charge_point_id)
