@@ -72,12 +72,16 @@ async def test_status_notification_dual_writes_per_connector(db_session) -> None
     assert charger.status == "Preparing"
 
     rows = (
-        await db_session.execute(
-            select(ConnectorStatus)
-            .where(ConnectorStatus.charger_id == charger.id)
-            .order_by(ConnectorStatus.connector_id)
+        (
+            await db_session.execute(
+                select(ConnectorStatus)
+                .where(ConnectorStatus.charger_id == charger.id)
+                .order_by(ConnectorStatus.connector_id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert [(r.connector_id, r.status) for r in rows] == [
         (1, "Available"),
         (2, "Preparing"),
@@ -96,9 +100,7 @@ async def test_status_notification_dual_writes_per_connector(db_session) -> None
 async def test_status_notification_connector_zero_writes_connector_status_only(
     db_session,
 ) -> None:
-    await ChargerService(db_session).register_boot(
-        charge_point_id="CP_C0", vendor="V", model="M"
-    )
+    await ChargerService(db_session).register_boot(charge_point_id="CP_C0", vendor="V", model="M")
     await ChargerService(db_session).update_status("CP_C0", "Charging")
     handler = Ocpp16Handler("CP_C0", db_session)
 

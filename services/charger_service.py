@@ -1,21 +1,29 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import get_settings
 from db.models import Charger
 from db.time import seconds_ago, utc_now
 from events.publisher import get_publisher
 from events.types import EventType
 from repositories.charger_repository import ChargerRepository
 from repositories.connector_status_repository import ConnectorStatusRepository
+from repositories.session_repository import SessionRepository
 from services.status import aggregate_station_status, normalize_connector_status
 from state.connection_state import get_connection_state
 
 logger = structlog.get_logger(__name__)
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 @dataclass(frozen=True)
@@ -113,6 +121,35 @@ class ChargerService:
         try:
             now = utc_now()
             normalized = normalize_connector_status(status)
+            if (
+                connector_id is not None
+                and connector_id != 0
+                and normalized in {"Charging", "SuspendedEV"}
+            ):
+                charger_preview = await self._repo.get_by_charge_point_id(charge_point_id)
+                if charger_preview is not None:
+                    sessions = SessionRepository(self._db)
+                    active = await sessions.get_active_by_charger_connector(
+                        charger_preview.id, connector_id
+                    )
+                    if active is None:
+                        window = get_settings().stale_status_remap_window_seconds
+                        completed = await sessions.latest_completed_by_charger_connector(
+                            charger_preview.id, connector_id
+                        )
+                        stopped_at = completed.stopped_at if completed is not None else None
+                        if stopped_at is not None and _as_utc(stopped_at) >= now - timedelta(
+                            seconds=window
+                        ):
+                            logger.info(
+                                "ocpp.stale_status_after_session_end",
+                                charge_point_id=charge_point_id,
+                                connector_id=connector_id,
+                                reported_status=normalized,
+                                stopped_at=_as_utc(stopped_at).isoformat(),
+                                window_seconds=window,
+                            )
+                            normalized = "Available"
             charger = await self._repo.set_status(
                 charge_point_id,
                 normalized,
@@ -178,6 +215,20 @@ class ChargerService:
     async def clear_disconnected(self, charge_point_id: str) -> Charger | None:
         try:
             charger = await self._repo.clear_disconnected(charge_point_id)
+            await self._db.commit()
+            await get_connection_state().mark_connected(charge_point_id)
+            await get_publisher().publish(
+                EventType.CHARGER_CONNECTED,
+                {"charge_point_id": charge_point_id},
+            )
+            return charger
+        except Exception:
+            await self._db.rollback()
+            raise
+
+    async def ensure_connected(self, charge_point_id: str) -> Charger:
+        try:
+            charger = await self._repo.ensure_on_connect(charge_point_id, utc_now())
             await self._db.commit()
             await get_connection_state().mark_connected(charge_point_id)
             await get_publisher().publish(

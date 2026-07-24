@@ -130,10 +130,10 @@ async def test_stop_transaction_persists_transaction_data_as_meter_values(
     assert active.meter_stop == 2500
 
     meters = (
-        await db_session.execute(
-            select(MeterValue).where(MeterValue.session_id == active.id)
-        )
-    ).scalars().all()
+        (await db_session.execute(select(MeterValue).where(MeterValue.session_id == active.id)))
+        .scalars()
+        .all()
+    )
     assert len(meters) == 1
     assert meters[0].value == 2500.0
     assert meters[0].unit == "Wh"

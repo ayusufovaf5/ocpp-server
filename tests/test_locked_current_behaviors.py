@@ -78,6 +78,80 @@ async def test_status_notification_finishing_maps_to_available(db_session) -> No
 
 
 @pytest.mark.asyncio
+async def test_stale_charging_status_without_active_session_maps_to_available(
+    db_session,
+) -> None:
+    chargers = ChargerService(db_session)
+    sessions = SessionService(db_session)
+    await chargers.register_boot(charge_point_id="CP_STALE_CH", vendor="V", model="M")
+    session = await sessions.start_transaction(
+        charge_point_id="CP_STALE_CH",
+        connector_id=1,
+        id_tag="TAG",
+        meter_start=0,
+        timestamp=utc_now_iso(),
+    )
+    await sessions.stop_transaction(
+        charge_point_id="CP_STALE_CH",
+        transaction_id=session.ocpp_transaction_id,
+        meter_stop=10,
+        timestamp=utc_now_iso(),
+    )
+    await chargers.update_status("CP_STALE_CH", "Charging", connector_id=1)
+    row = await chargers.get("CP_STALE_CH")
+    assert row is not None
+    assert row.status == "Available"
+
+
+@pytest.mark.asyncio
+async def test_stale_charging_outside_remap_window_keeps_reported_status(
+    db_session,
+) -> None:
+    from datetime import timedelta
+
+    from db.time import utc_now
+    from repositories.session_repository import SessionRepository
+
+    chargers = ChargerService(db_session)
+    sessions = SessionService(db_session)
+    await chargers.register_boot(charge_point_id="CP_STALE_OLD", vendor="V", model="M")
+    session = await sessions.start_transaction(
+        charge_point_id="CP_STALE_OLD",
+        connector_id=1,
+        id_tag="TAG",
+        meter_start=0,
+        timestamp=utc_now_iso(),
+    )
+    await sessions.stop_transaction(
+        charge_point_id="CP_STALE_OLD",
+        transaction_id=session.ocpp_transaction_id,
+        meter_stop=10,
+        timestamp=utc_now_iso(),
+    )
+    row_session = await SessionRepository(db_session).get_by_ocpp_transaction_id(
+        session.ocpp_transaction_id
+    )
+    assert row_session is not None
+    row_session.stopped_at = utc_now() - timedelta(seconds=120)
+    await db_session.commit()
+
+    await chargers.update_status("CP_STALE_OLD", "Charging", connector_id=1)
+    row = await chargers.get("CP_STALE_OLD")
+    assert row is not None
+    assert row.status == "Charging"
+
+
+@pytest.mark.asyncio
+async def test_preparing_without_session_is_never_remapped(db_session) -> None:
+    chargers = ChargerService(db_session)
+    await chargers.register_boot(charge_point_id="CP_PREP", vendor="V", model="M")
+    await chargers.update_status("CP_PREP", "Preparing", connector_id=1)
+    row = await chargers.get("CP_PREP")
+    assert row is not None
+    assert row.status == "Preparing"
+
+
+@pytest.mark.asyncio
 async def test_status_notification_suspended_evse_maps_to_suspended_ev(db_session) -> None:
     chargers = ChargerService(db_session)
     await chargers.register_boot(charge_point_id="CP_SEV", vendor="V", model="M")
@@ -105,9 +179,7 @@ async def _make_stale_unavailable(db_session, charge_point_id: str) -> None:
     assert settings.heartbeat_timeout_seconds == 120
 
     chargers = ChargerService(db_session)
-    charger = await chargers.register_boot(
-        charge_point_id=charge_point_id, vendor="V", model="M"
-    )
+    charger = await chargers.register_boot(charge_point_id=charge_point_id, vendor="V", model="M")
     charger.last_heartbeat = datetime.now(UTC) - timedelta(seconds=121)
     charger.status = "Available"
     await db_session.commit()
@@ -230,7 +302,9 @@ async def test_repeat_start_returns_existing_session_without_reject(db_session) 
 
     count = (
         await db_session.execute(
-            select(func.count()).select_from(ChargingSession).where(
+            select(func.count())
+            .select_from(ChargingSession)
+            .where(
                 ChargingSession.charger_id == first.charger_id,
                 ChargingSession.status == "Active",
             )
@@ -243,9 +317,7 @@ async def test_repeat_start_returns_existing_session_without_reject(db_session) 
 async def test_meter_values_without_active_session_still_returns_empty_success(
     db_session,
 ) -> None:
-    await ChargerService(db_session).register_boot(
-        charge_point_id="CP_MV", vendor="V", model="M"
-    )
+    await ChargerService(db_session).register_boot(charge_point_id="CP_MV", vendor="V", model="M")
     handler = Ocpp16Handler("CP_MV", db_session)
     now = utc_now_iso()
     raw = await handler.handle_raw(

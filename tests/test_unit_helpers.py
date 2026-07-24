@@ -57,9 +57,7 @@ def test_normalize_connector_status(status: str, expected: str) -> None:
         (["SuspendedEV", "Preparing"], "SuspendedEV"),
     ],
 )
-def test_aggregate_station_status(
-    statuses: list[str], expected: str | None
-) -> None:
+def test_aggregate_station_status(statuses: list[str], expected: str | None) -> None:
     assert aggregate_station_status(statuses) == expected
 
 

@@ -10,6 +10,10 @@ class ChargerRepository:
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
 
+    async def list_all(self) -> list[Charger]:
+        result = await self._db.execute(select(Charger).order_by(Charger.charge_point_id))
+        return list(result.scalars().all())
+
     async def get_by_charge_point_id(self, charge_point_id: str) -> Charger | None:
         result = await self._db.execute(
             select(Charger).where(Charger.charge_point_id == charge_point_id)
@@ -88,6 +92,28 @@ class ChargerRepository:
         if charger is None:
             return None
         charger.disconnected_at = None
+        await self._db.flush()
+        return charger
+
+    async def ensure_on_connect(self, charge_point_id: str, now: datetime) -> Charger:
+        charger = await self.get_by_charge_point_id(charge_point_id)
+        if charger is None:
+            charger = Charger(
+                charge_point_id=charge_point_id,
+                vendor="",
+                model="",
+                firmware_version=None,
+                connector_count=1,
+                status="Available",
+                last_heartbeat=now,
+                disconnected_at=None,
+            )
+            self._db.add(charger)
+        else:
+            charger.disconnected_at = None
+            charger.last_heartbeat = now
+            if charger.status in {"Unknown", "Unavailable"}:
+                charger.status = "Available"
         await self._db.flush()
         return charger
 

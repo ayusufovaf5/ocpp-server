@@ -36,9 +36,7 @@ class Charger(Base):
     )
 
     sessions: Mapped[list["ChargingSession"]] = relationship(back_populates="charger")
-    connector_statuses: Mapped[list["ConnectorStatus"]] = relationship(
-        back_populates="charger"
-    )
+    connector_statuses: Mapped[list["ConnectorStatus"]] = relationship(back_populates="charger")
 
 
 class ConnectorStatus(Base):

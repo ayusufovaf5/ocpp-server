@@ -7,6 +7,7 @@ from db.time import parse_ocpp_time, seconds_ago, utc_now
 from events.publisher import get_publisher
 from events.types import EventType
 from repositories.charger_repository import ChargerRepository
+from repositories.connector_status_repository import ConnectorStatusRepository
 from repositories.session_repository import SessionRepository
 from services.errors import UnknownChargerError
 from services.ops_alerts import emit_ops_alert
@@ -23,6 +24,7 @@ class SessionService:
     def __init__(self, db: AsyncSession) -> None:
         self._sessions = SessionRepository(db)
         self._chargers = ChargerRepository(db)
+        self._connector_statuses = ConnectorStatusRepository(db)
         self._db = db
 
     async def start_transaction(
@@ -126,11 +128,25 @@ class SessionService:
                 meter_stop_estimated=False,
             )
             await self._chargers.set_status(charge_point_id, "Available", now=utc_now())
+            await self._connector_statuses.upsert(
+                charger_id=row.charger_id,
+                connector_id=row.connector_id,
+                status="Available",
+                updated_at=utc_now(),
+            )
             await self._db.commit()
             await self._db.refresh(row)
             await get_connection_state().clear_active_session(charge_point_id, row.connector_id)
             await get_connection_state().set_connector_status(
                 charge_point_id, row.connector_id, "Available"
+            )
+            await get_publisher().publish(
+                EventType.CHARGER_STATUS_CHANGED,
+                {
+                    "charge_point_id": charge_point_id,
+                    "connector_id": row.connector_id,
+                    "status": "Available",
+                },
             )
             await get_publisher().publish(
                 EventType.SESSION_STOPPED,
@@ -214,7 +230,6 @@ class SessionService:
         try:
             charger = await self._chargers.get_by_charge_point_id(charge_point_id)
             if charger is None:
-                # Visibility only (R1): empty success conf is intentional until later phases.
                 logger.warning(
                     "ocpp.meter_values_without_active_session",
                     charger_id=None,
@@ -241,6 +256,19 @@ class SessionService:
                     transaction_id=transaction_id,
                     meter_value=meter_value,
                 )
+                if connector_id:
+                    now = utc_now()
+                    await self._chargers.set_status(charge_point_id, "Available", now=now)
+                    await self._connector_statuses.upsert(
+                        charger_id=charger.id,
+                        connector_id=connector_id,
+                        status="Available",
+                        updated_at=now,
+                    )
+                    await self._db.commit()
+                    await get_connection_state().set_connector_status(
+                        charge_point_id, connector_id, "Available"
+                    )
                 return []
 
             created = await self._persist_meter_entries(charging.id, meter_value)

@@ -6,6 +6,7 @@ import structlog
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, WebSocketException, status
 
 import db as db_module
+from api.live_status import router as live_status_router
 from api.remote_control import router as remote_control_router
 from auth import is_charge_point_allowed, log_dev_auth_warnings
 from config import get_settings
@@ -57,6 +58,7 @@ def create_ocpp_app() -> FastAPI:
         lifespan=lifespan,
     )
     app.include_router(remote_control_router)
+    app.include_router(live_status_router)
 
     @app.websocket("/ocpp/{charge_point_id}")
     async def ocpp_ws(websocket: WebSocket, charge_point_id: str) -> None:
@@ -79,7 +81,7 @@ def create_ocpp_app() -> FastAPI:
         registry = get_connection_registry()
         registry.register(charge_point_id, websocket)
         async with db_module.async_session_factory() as db:
-            await ChargerService(db).clear_disconnected(charge_point_id)
+            await ChargerService(db).ensure_connected(charge_point_id)
         logger.info("ocpp16.connected", charge_point_id=charge_point_id)
         try:
             while True:

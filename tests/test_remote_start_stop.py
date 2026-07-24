@@ -277,3 +277,276 @@ async def test_remote_stop_uses_ocpp_transaction_id_from_db(ocpp_http_server, db
                 pass
         else:
             await reply_task
+
+
+@pytest.mark.asyncio
+async def test_remote_stop_falls_back_to_latest_completed_session(
+    ocpp_http_server, db_session
+) -> None:
+    charge_point_id = "CP_RSTOP_FALLBACK"
+    await ChargerService(db_session).register_boot(
+        charge_point_id=charge_point_id, vendor="V", model="M"
+    )
+    session = await SessionService(db_session).start_transaction(
+        charge_point_id=charge_point_id,
+        connector_id=1,
+        id_tag="TAG",
+        meter_start=0,
+        timestamp=utc_now_iso(),
+    )
+    assert session.ocpp_transaction_id is not None
+    await SessionService(db_session).stop_transaction(
+        charge_point_id=charge_point_id,
+        transaction_id=session.ocpp_transaction_id,
+        meter_stop=10,
+        timestamp=utc_now_iso(),
+    )
+
+    outbound: list[dict] = []
+
+    async with websockets.connect(
+        f"{ocpp_http_server['ws']}/ocpp/{charge_point_id}",
+        subprotocols=["ocpp1.6"],
+    ) as ws:
+        await _boot(ws, charge_point_id)
+
+        async def station_loop() -> None:
+            try:
+                while True:
+                    frame = json.loads(await ws.recv())
+                    if frame[0] == MessageType.CALL and frame[2] == "RemoteStopTransaction":
+                        outbound.append(frame[3])
+                        await ws.send(
+                            json.dumps([MessageType.CALLRESULT, frame[1], {"status": "Accepted"}])
+                        )
+                        return
+            except websockets.ConnectionClosed:
+                return
+
+        reply_task = asyncio.create_task(station_loop())
+        async with AsyncClient(
+            base_url=ocpp_http_server["http"],
+            headers={"X-API-Key": DEV_API_KEY},
+        ) as client:
+            response = await client.post(
+                f"/stop/{charge_point_id}",
+                json={"transaction_id": 999},
+            )
+        assert response.status_code == 200
+        assert outbound == [{"transactionId": session.ocpp_transaction_id}]
+        if not reply_task.done():
+            reply_task.cancel()
+            try:
+                await reply_task
+            except asyncio.CancelledError:
+                pass
+        else:
+            await reply_task
+
+
+@pytest.mark.asyncio
+async def test_remote_start_stop_full_station_cycle_station_stop_reason(
+    ocpp_http_server, db_session
+) -> None:
+    charge_point_id = "CP_FULL_CYCLE"
+    await ChargerService(db_session).register_boot(
+        charge_point_id=charge_point_id, vendor="V", model="M"
+    )
+
+    async with websockets.connect(
+        f"{ocpp_http_server['ws']}/ocpp/{charge_point_id}",
+        subprotocols=["ocpp1.6"],
+    ) as ws:
+        await _boot(ws, charge_point_id)
+        station_tx_id: int | None = None
+        done = asyncio.Event()
+
+        async def station_loop() -> None:
+            nonlocal station_tx_id
+            try:
+                while True:
+                    frame = json.loads(await ws.recv())
+                    if frame[0] != MessageType.CALL:
+                        continue
+                    action = frame[2]
+                    if action == "RemoteStartTransaction":
+                        await ws.send(
+                            json.dumps([MessageType.CALLRESULT, frame[1], {"status": "Accepted"}])
+                        )
+                        await ws.send(
+                            json.dumps(
+                                [
+                                    MessageType.CALL,
+                                    "st1",
+                                    "StartTransaction",
+                                    {
+                                        "connectorId": 1,
+                                        "idTag": frame[3]["idTag"],
+                                        "meterStart": 0,
+                                        "timestamp": utc_now_iso(),
+                                    },
+                                ]
+                            )
+                        )
+                        reply = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
+                        assert reply[0] == MessageType.CALLRESULT
+                        station_tx_id = reply[2]["transactionId"]
+                        await ws.send(
+                            json.dumps(
+                                [
+                                    MessageType.CALL,
+                                    "sn1",
+                                    "StatusNotification",
+                                    {
+                                        "connectorId": 1,
+                                        "status": "Charging",
+                                        "errorCode": "NoError",
+                                        "timestamp": utc_now_iso(),
+                                    },
+                                ]
+                            )
+                        )
+                        assert json.loads(await asyncio.wait_for(ws.recv(), timeout=5))[0] == 3
+                    elif action == "RemoteStopTransaction":
+                        assert station_tx_id is not None
+                        assert frame[3]["transactionId"] == station_tx_id
+                        await ws.send(
+                            json.dumps([MessageType.CALLRESULT, frame[1], {"status": "Accepted"}])
+                        )
+                        await ws.send(
+                            json.dumps(
+                                [
+                                    MessageType.CALL,
+                                    "stop1",
+                                    "StopTransaction",
+                                    {
+                                        "transactionId": station_tx_id,
+                                        "meterStop": 50,
+                                        "timestamp": utc_now_iso(),
+                                        "reason": "Remote",
+                                    },
+                                ]
+                            )
+                        )
+                        assert json.loads(await asyncio.wait_for(ws.recv(), timeout=5))[0] == 3
+                        await ws.send(
+                            json.dumps(
+                                [
+                                    MessageType.CALL,
+                                    "sn2",
+                                    "StatusNotification",
+                                    {
+                                        "connectorId": 1,
+                                        "status": "Available",
+                                        "errorCode": "NoError",
+                                        "timestamp": utc_now_iso(),
+                                    },
+                                ]
+                            )
+                        )
+                        assert json.loads(await asyncio.wait_for(ws.recv(), timeout=5))[0] == 3
+                        done.set()
+                        return
+            except websockets.ConnectionClosed:
+                return
+
+        loop_task = asyncio.create_task(station_loop())
+        headers = {"X-API-Key": DEV_API_KEY}
+        async with AsyncClient(base_url=ocpp_http_server["http"], headers=headers) as client:
+            start = await client.post(
+                f"/start/{charge_point_id}",
+                json={"connector_id": 1, "id_tag": "ADMIN", "transaction_id": 4242},
+            )
+            assert start.status_code == 200
+            assert start.json()["response"]["status"] == "Accepted"
+
+            for _ in range(40):
+                if station_tx_id is not None:
+                    break
+                await asyncio.sleep(0.05)
+            assert station_tx_id is not None
+
+            stop = await client.post(
+                f"/stop/{charge_point_id}",
+                json={"transaction_id": 4242, "connector_id": 1},
+            )
+            assert stop.status_code == 200
+            assert stop.json()["response"]["status"] == "Accepted"
+
+        await asyncio.wait_for(done.wait(), timeout=5)
+        loop_task.cancel()
+        try:
+            await loop_task
+        except asyncio.CancelledError:
+            pass
+
+    from repositories.charger_repository import ChargerRepository
+    from repositories.session_repository import SessionRepository
+    from services.session_service import END_REASON_STATION_STOP
+
+    charger = await ChargerRepository(db_session).get_by_charge_point_id(charge_point_id)
+    assert charger is not None
+    latest = await SessionRepository(db_session).latest_with_ocpp_transaction_id(charger.id)
+    assert latest is not None
+    assert latest.status == "Completed"
+    assert latest.effective_end_reason == END_REASON_STATION_STOP
+
+
+@pytest.mark.asyncio
+async def test_remote_stop_with_connector_id_scopes_session(ocpp_http_server, db_session) -> None:
+    charge_point_id = "CP_RSTOP_CONN"
+    await ChargerService(db_session).register_boot(
+        charge_point_id=charge_point_id, vendor="V", model="M"
+    )
+    s1 = await SessionService(db_session).start_transaction(
+        charge_point_id=charge_point_id,
+        connector_id=1,
+        id_tag="A",
+        meter_start=0,
+        timestamp=utc_now_iso(),
+    )
+    s2 = await SessionService(db_session).start_transaction(
+        charge_point_id=charge_point_id,
+        connector_id=2,
+        id_tag="B",
+        meter_start=0,
+        timestamp=utc_now_iso(),
+    )
+    assert s1.ocpp_transaction_id != s2.ocpp_transaction_id
+
+    seen: list[int] = []
+    async with websockets.connect(
+        f"{ocpp_http_server['ws']}/ocpp/{charge_point_id}",
+        subprotocols=["ocpp1.6"],
+    ) as ws:
+        await _boot(ws, charge_point_id)
+
+        async def station_loop() -> None:
+            try:
+                while True:
+                    frame = json.loads(await ws.recv())
+                    if frame[0] == MessageType.CALL and frame[2] == "RemoteStopTransaction":
+                        seen.append(frame[3]["transactionId"])
+                        await ws.send(
+                            json.dumps([MessageType.CALLRESULT, frame[1], {"status": "Accepted"}])
+                        )
+                        return
+            except websockets.ConnectionClosed:
+                return
+
+        task = asyncio.create_task(station_loop())
+        async with AsyncClient(
+            base_url=ocpp_http_server["http"],
+            headers={"X-API-Key": DEV_API_KEY},
+        ) as client:
+            response = await client.post(
+                f"/stop/{charge_point_id}",
+                json={"transaction_id": 0, "connector_id": 2},
+            )
+        assert response.status_code == 200
+        assert seen == [s2.ocpp_transaction_id]
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass

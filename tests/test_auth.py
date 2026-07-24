@@ -76,9 +76,7 @@ async def test_charger_status_requires_api_key(db_engine) -> None:
             await ChargerService(session).register_boot(
                 charge_point_id="CP_X", vendor="V", model="M"
             )
-        ok = await bare.get(
-            "/chargers/CP_X/status", headers={"X-API-Key": DEV_API_KEY}
-        )
+        ok = await bare.get("/chargers/CP_X/status", headers={"X-API-Key": DEV_API_KEY})
         assert ok.status_code == 200
     application.dependency_overrides.clear()
 
@@ -137,9 +135,7 @@ async def test_ocpp_ws_rejects_charge_point_not_on_allowlist(
 
 
 @pytest.mark.asyncio
-async def test_ocpp_ws_allows_allowlisted_charge_point(
-    ocpp_server_restricted, db_session
-) -> None:
+async def test_ocpp_ws_allows_allowlisted_charge_point(ocpp_server_restricted, db_session) -> None:
     import websockets
 
     await ChargerService(db_session).register_boot(

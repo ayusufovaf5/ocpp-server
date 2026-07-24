@@ -57,6 +57,46 @@ class SessionRepository:
         )
         return list(result.scalars().all())
 
+    async def latest_with_ocpp_transaction_id(
+        self,
+        charger_id: int,
+        *,
+        connector_id: int | None = None,
+    ) -> ChargingSession | None:
+        stmt = select(ChargingSession).where(
+            ChargingSession.charger_id == charger_id,
+            ChargingSession.ocpp_transaction_id.is_not(None),
+        )
+        if connector_id is not None:
+            stmt = stmt.where(ChargingSession.connector_id == connector_id)
+        stmt = stmt.order_by(ChargingSession.started_at.desc()).limit(1)
+        result = await self._db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def latest_completed_by_charger_connector(
+        self,
+        charger_id: int,
+        connector_id: int,
+    ) -> ChargingSession | None:
+        result = await self._db.execute(
+            select(ChargingSession)
+            .where(
+                ChargingSession.charger_id == charger_id,
+                ChargingSession.connector_id == connector_id,
+                ChargingSession.status == "Completed",
+                ChargingSession.stopped_at.is_not(None),
+            )
+            .order_by(ChargingSession.stopped_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def list_all_active(self) -> list[ChargingSession]:
+        result = await self._db.execute(
+            select(ChargingSession).where(ChargingSession.status == "Active")
+        )
+        return list(result.scalars().all())
+
     async def get_by_ocpp_transaction_id(
         self,
         ocpp_transaction_id: int,

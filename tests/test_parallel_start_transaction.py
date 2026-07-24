@@ -99,10 +99,6 @@ async def _run_parallel_start_once(
 
 
 @pytest.mark.asyncio
-async def test_parallel_start_transaction_single_active_session(
-    tmp_path, monkeypatch
-) -> None:
+async def test_parallel_start_transaction_single_active_session(tmp_path, monkeypatch) -> None:
     for i in range(20):
-        await _run_parallel_start_once(
-            tmp_path / f"race_{i}.db", f"CP_RACE_{i}", monkeypatch
-        )
+        await _run_parallel_start_once(tmp_path / f"race_{i}.db", f"CP_RACE_{i}", monkeypatch)

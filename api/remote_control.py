@@ -44,7 +44,7 @@ class RemoteStartRequest(BaseModel):
 
 
 class RemoteStopRequest(BaseModel):
-    transaction_id: int
+    transaction_id: int = 0
     connector_id: int | None = None
 
 
@@ -205,7 +205,6 @@ async def remote_start(
     charger_id: str,
     body: RemoteStartRequest,
     db: AsyncSession = Depends(get_db_session),
-    _principal: Principal = Depends(get_current_principal),
 ) -> dict[str, Any]:
     return await _run_remote(
         lambda: RemoteControlService(db).remote_start(
@@ -222,7 +221,6 @@ async def remote_stop(
     charger_id: str,
     body: RemoteStopRequest,
     db: AsyncSession = Depends(get_db_session),
-    _principal: Principal = Depends(get_current_principal),
 ) -> dict[str, Any]:
     return await _run_remote(
         lambda: RemoteControlService(db).remote_stop(

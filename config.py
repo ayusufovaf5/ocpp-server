@@ -51,6 +51,11 @@ class Settings(BaseSettings):
         alias="OUTBOUND_CALL_TIMEOUT_SECONDS",
     )
 
+    stale_status_remap_window_seconds: int = Field(
+        default=60,
+        alias="STALE_STATUS_REMAP_WINDOW_SECONDS",
+    )
+
     evpoint_live_update_url: str = Field(
         default="https://localhost:7183/Charging/ocpp-live-update",
         alias="EVPOINT_LIVE_UPDATE_URL",
@@ -69,7 +74,7 @@ class Settings(BaseSettings):
     app_name: str = "opencpo-core"
     app_version: str = "0.2.0"
 
-    @computed_field  # type: ignore[prop-decorator]
+    @computed_field
     @property
     def sqlalchemy_database_url(self) -> str:
         if self.database_url:

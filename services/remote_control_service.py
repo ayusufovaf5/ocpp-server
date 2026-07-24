@@ -166,8 +166,6 @@ class RemoteControlService:
         transaction_id: int,
         timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
-        # transaction_id is accepted for REST parity with EvPoint/old webserver but is
-        # not stored and does not create a session (see ADR 016).
         _ = transaction_id
         return await self.call(
             charge_point_id,
@@ -184,8 +182,6 @@ class RemoteControlService:
         connector_id: int | None = None,
         timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
-        # REST transaction_id is the EvPoint app charging id — do not send it on the
-        # wire. Resolve the station ocpp_transaction_id from the active DB session.
         _ = transaction_id
 
         charger = await self._chargers.get_by_charge_point_id(charge_point_id)
@@ -198,14 +194,21 @@ class RemoteControlService:
         if connector_id is not None:
             active = await sessions.get_active_by_charger_connector(charger.id, connector_id)
             if active is None:
-                raise NoActiveSessionError(charge_point_id, connector_id=connector_id)
+                active = await sessions.latest_with_ocpp_transaction_id(
+                    charger.id, connector_id=connector_id
+                )
+                if active is None or active.ocpp_transaction_id is None:
+                    raise NoActiveSessionError(charge_point_id, connector_id=connector_id)
         else:
             active_list = await sessions.list_active_by_charger(charger.id)
             if not active_list:
-                raise NoActiveSessionError(charge_point_id)
-            if len(active_list) > 1:
+                active = await sessions.latest_with_ocpp_transaction_id(charger.id)
+                if active is None or active.ocpp_transaction_id is None:
+                    raise NoActiveSessionError(charge_point_id)
+            elif len(active_list) > 1:
                 raise AmbiguousActiveSessionError(charge_point_id, len(active_list))
-            active = active_list[0]
+            else:
+                active = active_list[0]
 
         if active.ocpp_transaction_id is None:
             raise NoActiveSessionError(charge_point_id, connector_id=active.connector_id)
