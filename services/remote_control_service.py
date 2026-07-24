@@ -78,3 +78,38 @@ class RemoteControlService:
             {"connectorId": connector_id},
             timeout_seconds=timeout_seconds,
         )
+
+    async def get_configuration(
+        self,
+        charge_point_id: str,
+        keys: list[str] | None = None,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        if keys:
+            payload["key"] = keys
+        return await self.call(
+            charge_point_id,
+            "GetConfiguration",
+            payload,
+            timeout_seconds=timeout_seconds,
+        )
+
+    async def change_configuration(
+        self,
+        charge_point_id: str,
+        configuration: dict[str, Any],
+        *,
+        timeout_seconds: float | None = None,
+    ) -> list[dict[str, Any]]:
+        results: list[dict[str, Any]] = []
+        for key, value in configuration.items():
+            result = await self.call(
+                charge_point_id,
+                "ChangeConfiguration",
+                {"key": key, "value": str(value)},
+                timeout_seconds=timeout_seconds,
+            )
+            results.append({"key": key, **result})
+        return results
