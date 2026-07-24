@@ -9,6 +9,7 @@ import db as db_module
 from api.remote_control import router as remote_control_router
 from auth import is_charge_point_allowed, log_dev_auth_warnings
 from config import get_settings
+from events.evpoint_push_consumer import EvpointPushConsumer
 from events.logging_consumer import LoggingConsumer
 from logging_config import configure_logging
 from ocpp16 import protocol
@@ -30,13 +31,16 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     heartbeat = asyncio.create_task(run_heartbeat_monitor())
     offline = asyncio.create_task(run_offline_session_monitor())
     logging_consumer = LoggingConsumer()
+    evpoint_consumer = EvpointPushConsumer()
     consumer_task = asyncio.create_task(logging_consumer.run())
+    evpoint_task = asyncio.create_task(evpoint_consumer.run())
     logger.info("ocpp16.startup", port=settings.ocpp16_port)
     try:
         yield
     finally:
         logging_consumer.stop()
-        for task in (heartbeat, offline, consumer_task):
+        evpoint_consumer.stop()
+        for task in (heartbeat, offline, consumer_task, evpoint_task):
             task.cancel()
             try:
                 await task

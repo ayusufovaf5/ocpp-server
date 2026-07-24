@@ -51,6 +51,21 @@ class Settings(BaseSettings):
         alias="OUTBOUND_CALL_TIMEOUT_SECONDS",
     )
 
+    evpoint_live_update_url: str = Field(
+        default="https://localhost:7183/Charging/ocpp-live-update",
+        alias="EVPOINT_LIVE_UPDATE_URL",
+    )
+    evpoint_ca_bundle: str | None = Field(default=None, alias="EVPOINT_CA_BUNDLE")
+    evpoint_push_max_attempts: int = Field(default=3, alias="EVPOINT_PUSH_MAX_ATTEMPTS")
+    evpoint_push_backoff_seconds: float = Field(
+        default=0.5,
+        alias="EVPOINT_PUSH_BACKOFF_SECONDS",
+    )
+    evpoint_push_timeout_seconds: float = Field(
+        default=5.0,
+        alias="EVPOINT_PUSH_TIMEOUT_SECONDS",
+    )
+
     app_name: str = "opencpo-core"
     app_version: str = "0.2.0"
 
