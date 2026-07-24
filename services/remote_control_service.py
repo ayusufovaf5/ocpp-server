@@ -48,3 +48,19 @@ class RemoteControlService:
             {"type": ocpp_type},
             timeout_seconds=timeout_seconds,
         )
+
+    async def change_availability(
+        self,
+        charge_point_id: str,
+        *,
+        is_available: bool,
+        connector_id: int = 0,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, Any]:
+        availability = "Operative" if is_available else "Inoperative"
+        return await self.call(
+            charge_point_id,
+            "ChangeAvailability",
+            {"connectorId": connector_id, "type": availability},
+            timeout_seconds=timeout_seconds,
+        )
