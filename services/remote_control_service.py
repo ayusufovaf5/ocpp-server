@@ -64,3 +64,17 @@ class RemoteControlService:
             {"connectorId": connector_id, "type": availability},
             timeout_seconds=timeout_seconds,
         )
+
+    async def unlock_connector(
+        self,
+        charge_point_id: str,
+        connector_id: int,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, Any]:
+        return await self.call(
+            charge_point_id,
+            "UnlockConnector",
+            {"connectorId": connector_id},
+            timeout_seconds=timeout_seconds,
+        )
