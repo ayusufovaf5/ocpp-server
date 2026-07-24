@@ -140,3 +140,15 @@ async def change_configuration(
     return await _run_remote(
         lambda: RemoteControlService(db).change_configuration(charger_id, body)
     )
+
+
+@router.get("/trigger-message/{charger_id}/{message_type}")
+async def trigger_message(
+    charger_id: str,
+    message_type: str,
+    db: AsyncSession = Depends(get_db_session),
+    _principal: Principal = Depends(get_current_principal),
+) -> dict[str, Any]:
+    return await _run_remote(
+        lambda: RemoteControlService(db).trigger_message(charger_id, message_type)
+    )

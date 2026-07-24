@@ -113,3 +113,54 @@ class RemoteControlService:
             )
             results.append({"key": key, **result})
         return results
+
+    async def trigger_message(
+        self,
+        charge_point_id: str,
+        message_type: str,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, Any] | str:
+        requested = _resolve_message_trigger(message_type)
+        if requested is None:
+            return f"Invalid message trigger: {message_type}"
+        return await self.call(
+            charge_point_id,
+            "TriggerMessage",
+            {"requestedMessage": requested},
+            timeout_seconds=timeout_seconds,
+        )
+
+
+_MESSAGE_TRIGGER_WIRE = {
+    "BootNotification",
+    "DiagnosticsStatusNotification",
+    "FirmwareStatusNotification",
+    "Heartbeat",
+    "MeterValues",
+    "StatusNotification",
+    "LogStatusNotification",
+    "SignChargePointCertificate",
+}
+
+_MESSAGE_TRIGGER_ALIASES = {
+    "boot_notification": "BootNotification",
+    "bootNotification": "BootNotification",
+    "diagnostics_status_notification": "DiagnosticsStatusNotification",
+    "diagnosticsStatusNotification": "DiagnosticsStatusNotification",
+    "firmware_status_notification": "FirmwareStatusNotification",
+    "firmwareStatusNotification": "FirmwareStatusNotification",
+    "heartbeat": "Heartbeat",
+    "meter_values": "MeterValues",
+    "meterValues": "MeterValues",
+    "status_notification": "StatusNotification",
+    "statusNotification": "StatusNotification",
+    "log_status_notification": "LogStatusNotification",
+    "sign_charge_point_certificate": "SignChargePointCertificate",
+}
+
+
+def _resolve_message_trigger(message_type: str) -> str | None:
+    if message_type in _MESSAGE_TRIGGER_WIRE:
+        return message_type
+    return _MESSAGE_TRIGGER_ALIASES.get(message_type)
