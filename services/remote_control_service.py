@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,5 +31,20 @@ class RemoteControlService:
             charge_point_id,
             action,
             payload,
+            timeout_seconds=timeout_seconds,
+        )
+
+    async def reset(
+        self,
+        charge_point_id: str,
+        reset_type: Literal["hard", "soft"],
+        *,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, Any]:
+        ocpp_type = "Hard" if reset_type == "hard" else "Soft"
+        return await self.call(
+            charge_point_id,
+            "Reset",
+            {"type": ocpp_type},
             timeout_seconds=timeout_seconds,
         )

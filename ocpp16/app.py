@@ -6,6 +6,7 @@ import structlog
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, WebSocketException, status
 
 import db as db_module
+from api.remote_control import router as remote_control_router
 from auth import is_charge_point_allowed, log_dev_auth_warnings
 from config import get_settings
 from events.logging_consumer import LoggingConsumer
@@ -51,6 +52,7 @@ def create_ocpp_app() -> FastAPI:
         version=settings.app_version,
         lifespan=lifespan,
     )
+    app.include_router(remote_control_router)
 
     @app.websocket("/ocpp/{charge_point_id}")
     async def ocpp_ws(websocket: WebSocket, charge_point_id: str) -> None:
