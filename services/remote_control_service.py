@@ -131,6 +131,26 @@ class RemoteControlService:
             timeout_seconds=timeout_seconds,
         )
 
+    async def update_firmware(
+        self,
+        charge_point_id: str,
+        location: str,
+        *,
+        retrieve_date: str | None = None,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, Any]:
+        from db.time import utc_now_iso
+
+        return await self.call(
+            charge_point_id,
+            "UpdateFirmware",
+            {
+                "location": location,
+                "retrieveDate": retrieve_date or utc_now_iso(),
+            },
+            timeout_seconds=timeout_seconds,
+        )
+
 
 _MESSAGE_TRIGGER_WIRE = {
     "BootNotification",

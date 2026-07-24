@@ -27,6 +27,10 @@ class UnlockConnectorRequest(BaseModel):
     connector_id: int
 
 
+class UpdateFirmwareRequest(BaseModel):
+    location: str
+
+
 def _remote_http_result(coro_result: Any) -> dict[str, Any]:
     return {"status": "success", "response": coro_result}
 
@@ -151,4 +155,16 @@ async def trigger_message(
 ) -> dict[str, Any]:
     return await _run_remote(
         lambda: RemoteControlService(db).trigger_message(charger_id, message_type)
+    )
+
+
+@router.post("/update-firmware/{charger_id}")
+async def update_firmware(
+    charger_id: str,
+    body: UpdateFirmwareRequest,
+    db: AsyncSession = Depends(get_db_session),
+    _principal: Principal = Depends(get_current_principal),
+) -> dict[str, Any]:
+    return await _run_remote(
+        lambda: RemoteControlService(db).update_firmware(charger_id, body.location)
     )
