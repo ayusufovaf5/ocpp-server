@@ -6,12 +6,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ocpp16 import protocol
 from repositories.charger_repository import ChargerRepository
-from services.errors import ChargerOfflineError
+from repositories.session_repository import SessionRepository
+from services.errors import (
+    AmbiguousActiveSessionError,
+    ChargerOfflineError,
+    NoActiveSessionError,
+)
 from state.connection_registry import get_connection_registry
 
 
 class RemoteControlService:
     def __init__(self, db: AsyncSession) -> None:
+        self._db = db
         self._chargers = ChargerRepository(db)
 
     async def call(
@@ -148,6 +154,66 @@ class RemoteControlService:
                 "location": location,
                 "retrieveDate": retrieve_date or utc_now_iso(),
             },
+            timeout_seconds=timeout_seconds,
+        )
+
+    async def remote_start(
+        self,
+        charge_point_id: str,
+        *,
+        connector_id: int,
+        id_tag: str,
+        transaction_id: int,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, Any]:
+        # transaction_id is accepted for REST parity with EvPoint/old webserver but is
+        # not stored and does not create a session (see ADR 016).
+        _ = transaction_id
+        return await self.call(
+            charge_point_id,
+            "RemoteStartTransaction",
+            {"connectorId": connector_id, "idTag": id_tag},
+            timeout_seconds=timeout_seconds,
+        )
+
+    async def remote_stop(
+        self,
+        charge_point_id: str,
+        *,
+        transaction_id: int,
+        connector_id: int | None = None,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, Any]:
+        # REST transaction_id is the EvPoint app charging id — do not send it on the
+        # wire. Resolve the station ocpp_transaction_id from the active DB session.
+        _ = transaction_id
+
+        charger = await self._chargers.get_by_charge_point_id(charge_point_id)
+        if charger is None or charger.disconnected_at is not None:
+            raise ChargerOfflineError(charge_point_id)
+        if not get_connection_registry().is_connected(charge_point_id):
+            raise ChargerOfflineError(charge_point_id)
+
+        sessions = SessionRepository(self._db)
+        if connector_id is not None:
+            active = await sessions.get_active_by_charger_connector(charger.id, connector_id)
+            if active is None:
+                raise NoActiveSessionError(charge_point_id, connector_id=connector_id)
+        else:
+            active_list = await sessions.list_active_by_charger(charger.id)
+            if not active_list:
+                raise NoActiveSessionError(charge_point_id)
+            if len(active_list) > 1:
+                raise AmbiguousActiveSessionError(charge_point_id, len(active_list))
+            active = active_list[0]
+
+        if active.ocpp_transaction_id is None:
+            raise NoActiveSessionError(charge_point_id, connector_id=active.connector_id)
+
+        return await self.call(
+            charge_point_id,
+            "RemoteStopTransaction",
+            {"transactionId": active.ocpp_transaction_id},
             timeout_seconds=timeout_seconds,
         )
 

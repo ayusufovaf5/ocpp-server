@@ -8,7 +8,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import Principal, get_current_principal
 from db import get_db_session
-from services.errors import ChargerCallError, ChargerOfflineError, ChargerTimeoutError
+from services.errors import (
+    AmbiguousActiveSessionError,
+    ChargerCallError,
+    ChargerOfflineError,
+    ChargerTimeoutError,
+    NoActiveSessionError,
+)
 from services.remote_control_service import RemoteControlService
 
 router = APIRouter()
@@ -29,6 +35,17 @@ class UnlockConnectorRequest(BaseModel):
 
 class UpdateFirmwareRequest(BaseModel):
     location: str
+
+
+class RemoteStartRequest(BaseModel):
+    connector_id: int
+    id_tag: str
+    transaction_id: int
+
+
+class RemoteStopRequest(BaseModel):
+    transaction_id: int
+    connector_id: int | None = None
 
 
 def _remote_http_result(coro_result: Any) -> dict[str, Any]:
@@ -59,6 +76,19 @@ async def _run_remote(factory) -> dict[str, Any]:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"status": "error", "response": "Charger not found"},
+        ) from None
+    except NoActiveSessionError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"status": "error", "response": "No active session"},
+        ) from None
+    except AmbiguousActiveSessionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "status": "error",
+                "response": (f"Multiple active sessions ({exc.count}); pass connector_id"),
+            },
         ) from None
     except (ChargerTimeoutError, ChargerCallError) as exc:
         mapped = _map_remote_errors(exc)
@@ -167,4 +197,37 @@ async def update_firmware(
 ) -> dict[str, Any]:
     return await _run_remote(
         lambda: RemoteControlService(db).update_firmware(charger_id, body.location)
+    )
+
+
+@router.post("/start/{charger_id}")
+async def remote_start(
+    charger_id: str,
+    body: RemoteStartRequest,
+    db: AsyncSession = Depends(get_db_session),
+    _principal: Principal = Depends(get_current_principal),
+) -> dict[str, Any]:
+    return await _run_remote(
+        lambda: RemoteControlService(db).remote_start(
+            charger_id,
+            connector_id=body.connector_id,
+            id_tag=body.id_tag,
+            transaction_id=body.transaction_id,
+        )
+    )
+
+
+@router.post("/stop/{charger_id}")
+async def remote_stop(
+    charger_id: str,
+    body: RemoteStopRequest,
+    db: AsyncSession = Depends(get_db_session),
+    _principal: Principal = Depends(get_current_principal),
+) -> dict[str, Any]:
+    return await _run_remote(
+        lambda: RemoteControlService(db).remote_stop(
+            charger_id,
+            transaction_id=body.transaction_id,
+            connector_id=body.connector_id,
+        )
     )

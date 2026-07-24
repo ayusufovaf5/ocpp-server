@@ -44,3 +44,20 @@ class ChargerCallError(Exception):
         self.error_description = error_description
         self.error_details = error_details or {}
         super().__init__(f"{error_code}: {error_description}")
+
+
+class NoActiveSessionError(Exception):
+    def __init__(self, charge_point_id: str, *, connector_id: int | None = None) -> None:
+        self.charge_point_id = charge_point_id
+        self.connector_id = connector_id
+        where = f" connector {connector_id}" if connector_id is not None else ""
+        super().__init__(f"No active session for {charge_point_id}{where}")
+
+
+class AmbiguousActiveSessionError(Exception):
+    def __init__(self, charge_point_id: str, count: int) -> None:
+        self.charge_point_id = charge_point_id
+        self.count = count
+        super().__init__(
+            f"Multiple active sessions ({count}) for {charge_point_id}; pass connector_id"
+        )
