@@ -8,6 +8,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
 import db as db_module
+from config import DEV_API_KEY
 from db import get_db_session
 from db.models import ConnectorStatus
 from main import create_app
@@ -29,7 +30,11 @@ async def api_client(db_engine) -> AsyncGenerator[AsyncClient, None]:
 
     application.dependency_overrides[get_db_session] = _db_session
     transport = ASGITransport(app=application)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers={"X-API-Key": DEV_API_KEY},
+    ) as ac:
         yield ac
     application.dependency_overrides.clear()
 

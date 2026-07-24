@@ -5,6 +5,7 @@ import structlog
 from fastapi import FastAPI
 
 from api import router as api_router
+from auth import log_dev_auth_warnings
 from config import get_settings
 from logging_config import configure_logging
 
@@ -15,6 +16,7 @@ logger = structlog.get_logger(__name__)
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     configure_logging(settings.log_level, settings.log_format)
+    log_dev_auth_warnings()
     logger.info(
         "app.startup",
         name=settings.app_name,

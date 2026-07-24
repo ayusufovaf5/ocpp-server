@@ -8,9 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import Charger
 from db.time import seconds_ago, utc_now
+from events.publisher import get_publisher
+from events.types import EventType
 from repositories.charger_repository import ChargerRepository
 from repositories.connector_status_repository import ConnectorStatusRepository
 from services.status import aggregate_station_status, normalize_connector_status
+from state.connection_state import get_connection_state
 
 logger = structlog.get_logger(__name__)
 
@@ -56,6 +59,12 @@ class ChargerService:
                 now=utc_now(),
             )
             await self._db.commit()
+            await get_connection_state().set_profile(
+                charge_point_id,
+                vendor=vendor,
+                model=model,
+                firmware_version=firmware_version,
+            )
             return charger
         except Exception:
             await self._db.rollback()
@@ -77,13 +86,18 @@ class ChargerService:
                     charge_point_id=charge_point_id,
                 )
             elif connector_id is not None and status is not None:
+                normalized = normalize_connector_status(status)
                 await self._connector_statuses.upsert(
                     charger_id=charger.id,
                     connector_id=connector_id,
-                    status=normalize_connector_status(status),
+                    status=normalized,
                     updated_at=now,
                 )
             await self._db.commit()
+            if charger is not None and connector_id is not None and status is not None:
+                await get_connection_state().set_connector_status(
+                    charge_point_id, connector_id, normalize_connector_status(status)
+                )
             return charger
         except Exception:
             await self._db.rollback()
@@ -108,6 +122,7 @@ class ChargerService:
                 logger.warning(
                     "ocpp.status_notification_unknown_charge_point",
                     charge_point_id=charge_point_id,
+                    connector_id=connector_id,
                     status=status,
                 )
             elif connector_id is not None:
@@ -120,6 +135,18 @@ class ChargerService:
                 if connector_id != 0:
                     await self._refresh_legacy_status_from_connectors(charger)
             await self._db.commit()
+            if charger is not None and connector_id is not None:
+                await get_connection_state().set_connector_status(
+                    charge_point_id, connector_id, normalized
+                )
+                await get_publisher().publish(
+                    EventType.CHARGER_STATUS_CHANGED,
+                    {
+                        "charge_point_id": charge_point_id,
+                        "connector_id": connector_id,
+                        "status": normalized,
+                    },
+                )
             return charger
         except Exception:
             await self._db.rollback()
@@ -138,6 +165,11 @@ class ChargerService:
         try:
             charger = await self._repo.mark_disconnected(charge_point_id, utc_now())
             await self._db.commit()
+            await get_connection_state().mark_disconnected(charge_point_id)
+            await get_publisher().publish(
+                EventType.CHARGER_DISCONNECTED,
+                {"charge_point_id": charge_point_id},
+            )
             return charger
         except Exception:
             await self._db.rollback()
@@ -147,6 +179,11 @@ class ChargerService:
         try:
             charger = await self._repo.clear_disconnected(charge_point_id)
             await self._db.commit()
+            await get_connection_state().mark_connected(charge_point_id)
+            await get_publisher().publish(
+                EventType.CHARGER_CONNECTED,
+                {"charge_point_id": charge_point_id},
+            )
             return charger
         except Exception:
             await self._db.rollback()
@@ -185,9 +222,7 @@ class ChargerService:
 
     async def _refresh_legacy_status_from_connectors(self, charger: Charger) -> None:
         rows = await self._connector_statuses.list_by_charger(charger.id)
-        aggregated = aggregate_station_status(
-            [row.status for row in rows if row.connector_id != 0]
-        )
+        aggregated = aggregate_station_status([row.status for row in rows if row.connector_id != 0])
         if aggregated is not None:
             charger.status = aggregated
             await self._db.flush()

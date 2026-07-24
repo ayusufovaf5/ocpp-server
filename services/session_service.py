@@ -4,11 +4,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import ChargingSession, MeterValue
 from db.time import parse_ocpp_time, seconds_ago, utc_now
+from events.publisher import get_publisher
+from events.types import EventType
 from repositories.charger_repository import ChargerRepository
 from repositories.session_repository import SessionRepository
 from services.errors import UnknownChargerError
 from services.ops_alerts import emit_ops_alert
 from services.status import normalize_meter_sample
+from state.connection_state import get_connection_state
 
 logger = structlog.get_logger(__name__)
 
@@ -40,6 +43,12 @@ class SessionService:
                 charger.id, connector_id
             )
             if existing is not None:
+                await self._on_session_started(
+                    charge_point_id=charge_point_id,
+                    connector_id=connector_id,
+                    row=existing,
+                    resumed=True,
+                )
                 return existing
 
             charger_id = charger.id
@@ -54,6 +63,12 @@ class SessionService:
                 await self._chargers.set_status(charge_point_id, "Charging", now=utc_now())
                 await self._db.commit()
                 await self._db.refresh(row)
+                await self._on_session_started(
+                    charge_point_id=charge_point_id,
+                    connector_id=connector_id,
+                    row=row,
+                    resumed=False,
+                )
                 return row
             except IntegrityError:
                 await self._db.rollback()
@@ -61,6 +76,12 @@ class SessionService:
                     charger_id, connector_id
                 )
                 if raced is not None:
+                    await self._on_session_started(
+                        charge_point_id=charge_point_id,
+                        connector_id=connector_id,
+                        row=raced,
+                        resumed=True,
+                    )
                     return raced
                 raise
         except Exception:
@@ -107,6 +128,21 @@ class SessionService:
             await self._chargers.set_status(charge_point_id, "Available", now=utc_now())
             await self._db.commit()
             await self._db.refresh(row)
+            await get_connection_state().clear_active_session(charge_point_id, row.connector_id)
+            await get_connection_state().set_connector_status(
+                charge_point_id, row.connector_id, "Available"
+            )
+            await get_publisher().publish(
+                EventType.SESSION_STOPPED,
+                {
+                    "charge_point_id": charge_point_id,
+                    "connector_id": row.connector_id,
+                    "session_id": row.id,
+                    "ocpp_transaction_id": row.ocpp_transaction_id,
+                    "meter_stop": row.meter_stop,
+                    "end_reason": row.effective_end_reason,
+                },
+            )
             return row
         except Exception:
             await self._db.rollback()
@@ -118,6 +154,7 @@ class SessionService:
             chargers = await self._chargers.list_disconnected_before(before=cutoff)
             closed_total = 0
             now = utc_now()
+            stopped_payloads: list[dict] = []
             for charger in chargers:
                 active = await self._sessions.list_active_by_charger(charger.id)
                 if not active:
@@ -138,6 +175,16 @@ class SessionService:
                     )
                     session_ids.append(session.id)
                     closed_total += 1
+                    stopped_payloads.append(
+                        {
+                            "charge_point_id": charger.charge_point_id,
+                            "connector_id": session.connector_id,
+                            "session_id": session.id,
+                            "ocpp_transaction_id": session.ocpp_transaction_id,
+                            "meter_stop": meter_stop,
+                            "end_reason": END_REASON_CONNECTION_TIMEOUT,
+                        }
+                    )
                 logger.warning(
                     "ocpp.offline_session_auto_closed",
                     charger_id=charger.id,
@@ -146,6 +193,11 @@ class SessionService:
                     closed_count=len(session_ids),
                 )
             await self._db.commit()
+            for payload in stopped_payloads:
+                await get_connection_state().clear_active_session(
+                    payload["charge_point_id"], payload["connector_id"]
+                )
+                await get_publisher().publish(EventType.SESSION_STOPPED, payload)
             return closed_total
         except Exception:
             await self._db.rollback()
@@ -162,8 +214,10 @@ class SessionService:
         try:
             charger = await self._chargers.get_by_charge_point_id(charge_point_id)
             if charger is None:
+                # Visibility only (R1): empty success conf is intentional until later phases.
                 logger.warning(
                     "ocpp.meter_values_without_active_session",
+                    charger_id=None,
                     charge_point_id=charge_point_id,
                     connector_id=connector_id,
                     transaction_id=transaction_id,
@@ -181,6 +235,7 @@ class SessionService:
             if charging is None or charging.status != "Active":
                 logger.warning(
                     "ocpp.meter_values_without_active_session",
+                    charger_id=charger.id,
                     charge_point_id=charge_point_id,
                     connector_id=connector_id,
                     transaction_id=transaction_id,
@@ -191,10 +246,44 @@ class SessionService:
             created = await self._persist_meter_entries(charging.id, meter_value)
             await self._chargers.set_status(charge_point_id, "Charging", now=utc_now())
             await self._db.commit()
+            if created:
+                await get_publisher().publish(
+                    EventType.METER_VALUES_RECEIVED,
+                    {
+                        "charge_point_id": charge_point_id,
+                        "connector_id": connector_id,
+                        "session_id": charging.id,
+                        "ocpp_transaction_id": charging.ocpp_transaction_id,
+                        "count": len(created),
+                    },
+                )
             return created
         except Exception:
             await self._db.rollback()
             raise
+
+    async def _on_session_started(
+        self,
+        *,
+        charge_point_id: str,
+        connector_id: int,
+        row: ChargingSession,
+        resumed: bool,
+    ) -> None:
+        await get_connection_state().set_active_session(charge_point_id, connector_id, row.id)
+        await get_connection_state().set_connector_status(charge_point_id, connector_id, "Charging")
+        await get_publisher().publish(
+            EventType.SESSION_STARTED,
+            {
+                "charge_point_id": charge_point_id,
+                "connector_id": connector_id,
+                "session_id": row.id,
+                "ocpp_transaction_id": row.ocpp_transaction_id,
+                "id_tag": row.id_tag,
+                "meter_start": row.meter_start,
+                "resumed": resumed,
+            },
+        )
 
     async def _persist_meter_entries(
         self,

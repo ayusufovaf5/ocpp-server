@@ -22,11 +22,15 @@ def _parse(raw: str) -> tuple[int, str, object]:
     msg_type = int(frame[0])
     uid = str(frame[1])
     if msg_type == 4:
-        return msg_type, uid, {
-            "error_code": frame[2],
-            "error_description": frame[3],
-            "error_details": frame[4] if len(frame) > 4 else {},
-        }
+        return (
+            msg_type,
+            uid,
+            {
+                "error_code": frame[2],
+                "error_description": frame[3],
+                "error_details": frame[4] if len(frame) > 4 else {},
+            },
+        )
     return msg_type, uid, frame[2]
 
 
@@ -49,9 +53,7 @@ async def test_long_id_tag_returns_formation_violation_not_db_error(db_session) 
 
 
 @pytest.mark.asyncio
-async def test_meter_values_without_session_logs_warning(
-    db_session, caplog, capsys
-) -> None:
+async def test_meter_values_without_session_logs_warning(db_session, caplog, capsys) -> None:
     await ChargerService(db_session).register_boot(
         charge_point_id="CP_LOG_MV", vendor="V", model="M"
     )
@@ -67,13 +69,15 @@ async def test_meter_values_without_session_logs_warning(
         )
     assert msg_type == 3
     assert payload == {}
-    _assert_logged("ocpp.meter_values_without_active_session", caplog, capsys)
+    captured = capsys.readouterr()
+    blob = caplog.text + captured.out + captured.err
+    assert "ocpp.meter_values_without_active_session" in blob
+    assert "connector_id" in blob
+    assert "meter_value" in blob
 
 
 @pytest.mark.asyncio
-async def test_stop_unknown_transaction_id_logs_warning(
-    db_session, caplog, capsys
-) -> None:
+async def test_stop_unknown_transaction_id_logs_warning(db_session, caplog, capsys) -> None:
     await ChargerService(db_session).register_boot(
         charge_point_id="CP_LOG_STOP", vendor="V", model="M"
     )
@@ -98,14 +102,10 @@ async def test_stop_unknown_transaction_id_logs_warning(
 
 
 @pytest.mark.asyncio
-async def test_heartbeat_unknown_charge_point_logs_warning(
-    db_session, caplog, capsys
-) -> None:
+async def test_heartbeat_unknown_charge_point_logs_warning(db_session, caplog, capsys) -> None:
     handler = Ocpp16Handler("CP_UNKNOWN_HB", db_session)
     with caplog.at_level(logging.WARNING):
-        msg_type, _, payload = _parse(
-            await handler.handle_raw(_call_frame("h1", "Heartbeat", {}))
-        )
+        msg_type, _, payload = _parse(await handler.handle_raw(_call_frame("h1", "Heartbeat", {})))
     assert msg_type == 3
     assert "currentTime" in payload
     _assert_logged("ocpp.heartbeat_unknown_charge_point", caplog, capsys)
@@ -133,6 +133,7 @@ async def test_status_notification_unknown_charge_point_logs_warning(
 
 @pytest.mark.asyncio
 async def test_start_without_boot_returns_internal_error(db_session) -> None:
+    # Current (problematic) behaviour until R6: unknown charger → InternalError, not Rejected.
     handler = Ocpp16Handler("CP_NO_BOOT", db_session)
     msg_type, uid, payload = _parse(
         await handler.handle_raw(
@@ -156,6 +157,7 @@ async def test_start_without_boot_returns_internal_error(db_session) -> None:
 
 @pytest.mark.asyncio
 async def test_stop_without_transaction_id_does_not_close_session(db_session) -> None:
+    # Current behaviour until R4: missing transactionId → FormationViolation; active session kept.
     chargers = ChargerService(db_session)
     sessions = SessionService(db_session)
     await chargers.register_boot(charge_point_id="CP_STOP_MISS", vendor="V", model="M")
@@ -184,8 +186,6 @@ async def test_stop_without_transaction_id_does_not_close_session(db_session) ->
     await db_session.refresh(active)
     assert active.status == "Active"
     still = (
-        await db_session.execute(
-            select(ChargingSession).where(ChargingSession.id == active.id)
-        )
+        await db_session.execute(select(ChargingSession).where(ChargingSession.id == active.id))
     ).scalar_one()
     assert still.status == "Active"

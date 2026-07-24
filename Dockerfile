@@ -8,13 +8,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml README.md ./
-COPY config.py main.py logging_config.py ./
+COPY config.py main.py logging_config.py auth.py ./
 COPY api ./api
 COPY db ./db
 COPY services ./services
 COPY repositories ./repositories
 COPY ocpp16 ./ocpp16
 COPY tasks ./tasks
+COPY state ./state
+COPY events ./events
 COPY migrations ./migrations
 COPY alembic.ini ./
 

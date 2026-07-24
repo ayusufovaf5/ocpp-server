@@ -5,6 +5,8 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import get_settings
+from events.publisher import get_publisher
+from events.types import EventType
 from ocpp16 import protocol
 from ocpp16.messages import (
     AuthorizeConf,
@@ -148,7 +150,14 @@ class Ocpp16Handler:
         return dump_ocpp(StatusNotificationConf())
 
     async def _authorize(self, payload: dict[str, Any]) -> dict[str, Any]:
-        AuthorizeReq.model_validate(payload)
+        req = AuthorizeReq.model_validate(payload)
+        await get_publisher().publish(
+            EventType.AUTH_REQUESTED,
+            {
+                "charge_point_id": self.charge_point_id,
+                "id_tag": req.id_tag,
+            },
+        )
         return dump_ocpp(AuthorizeConf(idTagInfo=IdTagInfo(status="Accepted")))
 
     async def _start_transaction(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -183,9 +192,7 @@ class Ocpp16Handler:
         req = StopTransactionReq.model_validate(payload)
         transaction_data = None
         if req.transaction_data:
-            transaction_data = [
-                mv.model_dump(by_alias=True) for mv in req.transaction_data
-            ]
+            transaction_data = [mv.model_dump(by_alias=True) for mv in req.transaction_data]
         await self._sessions.stop_transaction(
             charge_point_id=self.charge_point_id,
             transaction_id=req.transaction_id,

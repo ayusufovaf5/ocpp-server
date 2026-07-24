@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from auth import Principal, get_current_principal
 from config import get_settings
 from db import get_db_session
 from services.charger_service import ChargerService
@@ -44,7 +45,9 @@ async def health(db: AsyncSession = Depends(get_db_session)) -> JSONResponse:
 
 
 @router.get("/version")
-async def version() -> dict[str, str]:
+async def version(
+    _principal: Principal = Depends(get_current_principal),
+) -> dict[str, str]:
     settings = get_settings()
     return {
         "name": settings.app_name,
@@ -59,6 +62,7 @@ async def version() -> dict[str, str]:
 async def charger_status(
     charge_point_id: str,
     db: AsyncSession = Depends(get_db_session),
+    _principal: Principal = Depends(get_current_principal),
 ) -> ChargerStatusResponse:
     view = await ChargerService(db).get_status_view(charge_point_id)
     if view is None:

@@ -3,12 +3,37 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from fakeredis import FakeAsyncRedis
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 import db as db_module
+from config import DEV_API_KEY, get_settings
 from db import Base, get_db_session
+from events.publisher import EventPublisher, set_publisher
 from main import create_app
+from state.connection_state import ConnectionState, set_connection_state
+from state.redis_client import set_redis
+
+
+@pytest.fixture(autouse=True)
+def _clear_settings_cache():
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+async def fake_redis():
+    client = FakeAsyncRedis(decode_responses=True)
+    set_redis(client)
+    set_connection_state(ConnectionState(ttl_seconds=3600))
+    set_publisher(EventPublisher())
+    yield client
+    set_publisher(None)
+    set_connection_state(None)
+    set_redis(None)
+    await client.aclose()
 
 
 @pytest.fixture
@@ -28,7 +53,8 @@ def app():
 @pytest.fixture
 async def client(app) -> AsyncGenerator[AsyncClient, None]:
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+    headers = {"X-API-Key": DEV_API_KEY}
+    async with AsyncClient(transport=transport, base_url="http://test", headers=headers) as ac:
         yield ac
 
 

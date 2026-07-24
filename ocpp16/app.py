@@ -3,10 +3,12 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import structlog
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, WebSocketException, status
 
 import db as db_module
+from auth import is_charge_point_allowed, log_dev_auth_warnings
 from config import get_settings
+from events.logging_consumer import LoggingConsumer
 from logging_config import configure_logging
 from ocpp16.handler import Ocpp16Handler
 from services.charger_service import ChargerService
@@ -20,13 +22,17 @@ logger = structlog.get_logger(__name__)
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     configure_logging(settings.log_level, settings.log_format)
+    log_dev_auth_warnings()
     heartbeat = asyncio.create_task(run_heartbeat_monitor())
     offline = asyncio.create_task(run_offline_session_monitor())
+    logging_consumer = LoggingConsumer()
+    consumer_task = asyncio.create_task(logging_consumer.run())
     logger.info("ocpp16.startup", port=settings.ocpp16_port)
     try:
         yield
     finally:
-        for task in (heartbeat, offline):
+        logging_consumer.stop()
+        for task in (heartbeat, offline, consumer_task):
             task.cancel()
             try:
                 await task
@@ -45,6 +51,18 @@ def create_ocpp_app() -> FastAPI:
 
     @app.websocket("/ocpp/{charge_point_id}")
     async def ocpp_ws(websocket: WebSocket, charge_point_id: str) -> None:
+        settings = get_settings()
+        if not is_charge_point_allowed(charge_point_id, settings.ocpp_charge_point_allowlist):
+            logger.warning(
+                "ocpp.auth_rejected",
+                charge_point_id=charge_point_id,
+                reason="not_in_allowlist",
+            )
+            raise WebSocketException(
+                code=status.WS_1008_POLICY_VIOLATION,
+                reason="Unauthorized charge_point_id",
+            )
+
         subprotocol = None
         if "ocpp1.6" in (websocket.headers.get("sec-websocket-protocol") or ""):
             subprotocol = "ocpp1.6"
