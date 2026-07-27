@@ -35,11 +35,6 @@ HttpPostFn = Callable[..., Awaitable[int]]
 
 
 class EvpointPushConsumer(EventConsumer):
-    """Second consumer on ``csms.events`` — pushes EvPoint-compatible live updates.
-
-    Uses its own consumer group so LoggingConsumer still receives every message.
-    """
-
     def __init__(
         self,
         *,
@@ -133,4 +128,3 @@ class EvpointPushConsumer(EventConsumer):
             attempts=self._max_attempts,
             error=f"{type(last_error).__name__}: {last_error}" if last_error else None,
         )
-        # Do not re-raise: ACK and continue (ADR 015 — no infinite retry / DLQ yet).

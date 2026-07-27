@@ -14,8 +14,6 @@ DEFAULT_TTL_SECONDS = 24 * 60 * 60
 
 
 class ConnectionState:
-    """Live charge-point connection state in Redis (no direct redis calls outside state/)."""
-
     def __init__(self, *, ttl_seconds: int = DEFAULT_TTL_SECONDS) -> None:
         self._ttl = ttl_seconds
 

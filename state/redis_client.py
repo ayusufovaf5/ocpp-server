@@ -20,7 +20,6 @@ async def get_redis() -> redis.Redis:
             settings.redis_url,
             decode_responses=True,
             socket_connect_timeout=5.0,
-            # None: do not treat idle Streams reads as hard timeouts.
             socket_timeout=None,
         )
     return _redis

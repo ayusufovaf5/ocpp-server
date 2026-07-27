@@ -22,6 +22,5 @@ def reset_for_tests() -> None:
 
 
 def emit_ops_alert(alert_code: str, **fields: object) -> None:
-    """Operator-facing alert: distinct from routine warnings for paging/metrics."""
     incr(f"alert.{alert_code}")
     logger.error("ops.alert", alert_code=alert_code, **fields)

@@ -18,10 +18,6 @@ def normalize_connector_status(status: str) -> str:
 
 
 def aggregate_station_status(connector_statuses: list[str]) -> str | None:
-    """Aggregate per-connector statuses into one station status (ADR 005).
-
-    Returns None when there are no connector rows (caller should use legacy).
-    """
     if not connector_statuses:
         return None
 

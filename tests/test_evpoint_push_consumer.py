@@ -70,11 +70,6 @@ def test_tls_verification_is_explicitly_enabled() -> None:
 
 
 def test_post_live_update_uses_verifying_ssl_context(monkeypatch) -> None:
-    """Assert the HTTP path actually passes a verifying context into urlopen.
-
-    This is stronger than checking defaults: if someone reintroduces
-    CERT_NONE on the request path, this fails even when create_* looks fine.
-    """
     seen: dict[str, Any] = {}
 
     class _Resp:
@@ -86,7 +81,7 @@ def test_post_live_update_uses_verifying_ssl_context(monkeypatch) -> None:
         def __exit__(self, *args: object) -> None:
             return None
 
-    def fake_urlopen(request, data=None, timeout=None, *, context=None, **kwargs):  # noqa: ANN001
+    def fake_urlopen(request, data=None, timeout=None, *, context=None, **kwargs):
         assert context is not None
         seen["verify_mode"] = context.verify_mode
         seen["check_hostname"] = context.check_hostname
@@ -96,7 +91,6 @@ def test_post_live_update_uses_verifying_ssl_context(monkeypatch) -> None:
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     context = create_evpoint_ssl_context()
-    # Simulate the old bug and prove we refuse it on the wire path.
     broken = ssl.create_default_context()
     broken.check_hostname = False
     broken.verify_mode = ssl.CERT_NONE

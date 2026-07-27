@@ -133,7 +133,6 @@ async def test_status_notification_unknown_charge_point_logs_warning(
 
 @pytest.mark.asyncio
 async def test_start_without_boot_returns_internal_error(db_session) -> None:
-    # Current (problematic) behaviour until R6: unknown charger → InternalError, not Rejected.
     handler = Ocpp16Handler("CP_NO_BOOT", db_session)
     msg_type, uid, payload = _parse(
         await handler.handle_raw(
@@ -157,7 +156,6 @@ async def test_start_without_boot_returns_internal_error(db_session) -> None:
 
 @pytest.mark.asyncio
 async def test_stop_without_transaction_id_does_not_close_session(db_session) -> None:
-    # Current behaviour until R4: missing transactionId → FormationViolation; active session kept.
     chargers = ChargerService(db_session)
     sessions = SessionService(db_session)
     await chargers.register_boot(charge_point_id="CP_STOP_MISS", vendor="V", model="M")

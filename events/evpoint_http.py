@@ -1,5 +1,3 @@
-"""HTTP client for EvPoint live-update (TLS verification always on)."""
-
 from __future__ import annotations
 
 import asyncio
@@ -10,11 +8,9 @@ from typing import Any
 
 
 def create_evpoint_ssl_context(*, ca_bundle: str | None = None) -> ssl.SSLContext:
-    """Default system trust store; optional extra CA. Never disables verification."""
     context = ssl.create_default_context()
     if ca_bundle:
         context.load_verify_locations(cafile=ca_bundle)
-    # Explicit: do not mirror old CERT_NONE / check_hostname=False.
     if context.verify_mode == ssl.CERT_NONE:
         context.verify_mode = ssl.CERT_REQUIRED
     context.check_hostname = True
@@ -56,4 +52,4 @@ async def post_live_update(
 
 
 class EvpointPushError(Exception):
-    """Raised when EvPoint HTTP push fails (network / HTTP / TLS)."""
+    pass

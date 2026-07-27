@@ -1,5 +1,3 @@
-"""EvPoint live-update payload — shape parity with old evpoint_notifier.build_payload."""
-
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -34,7 +32,6 @@ def build_payload(
     *,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Match old EvPointNotifier.build_payload(charge_point_id, charger_details)."""
     connectors: list[dict[str, Any]] = []
 
     for connector in charger_details.get("connectors", []):
@@ -66,7 +63,6 @@ def charger_details_from_event(
     event_type: EventType,
     payload: dict[str, Any],
 ) -> dict[str, Any]:
-    """Map a bus event into the charger_details dict expected by build_payload."""
     connector_id = payload.get("connector_id")
     if connector_id is None:
         return {"connectors": []}

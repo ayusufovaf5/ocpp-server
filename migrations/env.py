@@ -10,7 +10,9 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from config import get_settings
 from db import Base
-from db import models as _models  # noqa: F401
+from db import models as _models
+
+assert _models is not None
 
 config = context.config
 if config.config_file_name is not None:

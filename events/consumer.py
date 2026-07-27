@@ -18,8 +18,6 @@ DEFAULT_GROUP = "csms-consumers"
 
 
 class EventConsumer(ABC):
-    """Base Redis Streams consumer with a consumer group (at-least-once)."""
-
     def __init__(
         self,
         *,
@@ -65,8 +63,6 @@ class EventConsumer(ABC):
         client = await get_redis()
         while self._running:
             try:
-                # block=None = non-blocking. Redis BLOCK 0 means wait forever
-                # (that collided with the client socket timeout and spammed errors).
                 rows = await client.xreadgroup(
                     groupname=self._group,
                     consumername=self._consumer_name,
