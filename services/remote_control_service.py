@@ -157,6 +157,33 @@ class RemoteControlService:
             timeout_seconds=timeout_seconds,
         )
 
+    async def get_diagnostics(
+        self,
+        charge_point_id: str,
+        *,
+        location: str,
+        retries: int | None = None,
+        retry_interval: int | None = None,
+        start_time: str | None = None,
+        stop_time: str | None = None,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"location": location}
+        if retries is not None:
+            payload["retries"] = retries
+        if retry_interval is not None:
+            payload["retryInterval"] = retry_interval
+        if start_time is not None:
+            payload["startTime"] = start_time
+        if stop_time is not None:
+            payload["stopTime"] = stop_time
+        return await self.call(
+            charge_point_id,
+            "GetDiagnostics",
+            payload,
+            timeout_seconds=timeout_seconds,
+        )
+
     async def remote_start(
         self,
         charge_point_id: str,

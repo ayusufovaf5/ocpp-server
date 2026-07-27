@@ -9,6 +9,10 @@ __all__ = [
     "AuthorizeReq",
     "BootNotificationConf",
     "BootNotificationReq",
+    "DiagnosticsStatusNotificationConf",
+    "DiagnosticsStatusNotificationReq",
+    "FirmwareStatusNotificationConf",
+    "FirmwareStatusNotificationReq",
     "HeartbeatConf",
     "HeartbeatReq",
     "IdTagInfo",
@@ -134,6 +138,30 @@ class StopTransactionReq(CamelModel):
 
 class StopTransactionConf(CamelModel):
     id_tag_info: IdTagInfo | None = Field(default=None, alias="idTagInfo")
+
+
+class DiagnosticsStatusNotificationReq(CamelModel):
+    status: Literal["Idle", "Uploaded", "UploadFailed", "Uploading"]
+
+
+class DiagnosticsStatusNotificationConf(CamelModel):
+    pass
+
+
+class FirmwareStatusNotificationReq(CamelModel):
+    status: Literal[
+        "Downloaded",
+        "DownloadFailed",
+        "Downloading",
+        "Idle",
+        "InstallationFailed",
+        "Installing",
+        "Installed",
+    ]
+
+
+class FirmwareStatusNotificationConf(CamelModel):
+    pass
 
 
 def dump_ocpp(model: BaseModel) -> dict[str, Any]:

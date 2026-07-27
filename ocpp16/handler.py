@@ -13,6 +13,10 @@ from ocpp16.messages import (
     AuthorizeReq,
     BootNotificationConf,
     BootNotificationReq,
+    DiagnosticsStatusNotificationConf,
+    DiagnosticsStatusNotificationReq,
+    FirmwareStatusNotificationConf,
+    FirmwareStatusNotificationReq,
     HeartbeatConf,
     HeartbeatReq,
     IdTagInfo,
@@ -106,6 +110,8 @@ class Ocpp16Handler:
             "StartTransaction": self._start_transaction,
             "MeterValues": self._meter_values,
             "StopTransaction": self._stop_transaction,
+            "DiagnosticsStatusNotification": self._diagnostics_status_notification,
+            "FirmwareStatusNotification": self._firmware_status_notification,
         }
         handler = handlers.get(action)
         if handler is None:
@@ -201,3 +207,25 @@ class Ocpp16Handler:
             transaction_data=transaction_data,
         )
         return dump_ocpp(StopTransactionConf())
+
+    async def _diagnostics_status_notification(self, payload: dict[str, Any]) -> dict[str, Any]:
+        req = DiagnosticsStatusNotificationReq.model_validate(payload)
+        await get_publisher().publish(
+            EventType.DIAGNOSTICS_STATUS_CHANGED,
+            {
+                "charge_point_id": self.charge_point_id,
+                "status": req.status,
+            },
+        )
+        return dump_ocpp(DiagnosticsStatusNotificationConf())
+
+    async def _firmware_status_notification(self, payload: dict[str, Any]) -> dict[str, Any]:
+        req = FirmwareStatusNotificationReq.model_validate(payload)
+        await get_publisher().publish(
+            EventType.FIRMWARE_STATUS_CHANGED,
+            {
+                "charge_point_id": self.charge_point_id,
+                "status": req.status,
+            },
+        )
+        return dump_ocpp(FirmwareStatusNotificationConf())

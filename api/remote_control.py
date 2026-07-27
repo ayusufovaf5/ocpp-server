@@ -37,6 +37,14 @@ class UpdateFirmwareRequest(BaseModel):
     location: str
 
 
+class GetDiagnosticsRequest(BaseModel):
+    location: str
+    retries: int | None = None
+    retry_interval: int | None = None
+    start_time: str | None = None
+    stop_time: str | None = None
+
+
 class RemoteStartRequest(BaseModel):
     connector_id: int
     id_tag: str
@@ -197,6 +205,25 @@ async def update_firmware(
 ) -> dict[str, Any]:
     return await _run_remote(
         lambda: RemoteControlService(db).update_firmware(charger_id, body.location)
+    )
+
+
+@router.post("/get-diagnostics/{charger_id}")
+async def get_diagnostics(
+    charger_id: str,
+    body: GetDiagnosticsRequest,
+    db: AsyncSession = Depends(get_db_session),
+    _principal: Principal = Depends(get_current_principal),
+) -> dict[str, Any]:
+    return await _run_remote(
+        lambda: RemoteControlService(db).get_diagnostics(
+            charger_id,
+            location=body.location,
+            retries=body.retries,
+            retry_interval=body.retry_interval,
+            start_time=body.start_time,
+            stop_time=body.stop_time,
+        )
     )
 
 
