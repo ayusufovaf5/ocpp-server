@@ -14,6 +14,7 @@ logger = logging.getLogger("cp-sim")
 
 CALL = 2
 CALLRESULT = 3
+CALLERROR = 4
 
 
 def _uid() -> str:
@@ -94,6 +95,13 @@ class Simulator:
                 fut.set_result(payload)
             return
 
+        if frame[0] == CALLERROR:
+            msg_id = frame[1]
+            fut = self._pending.pop(msg_id, None)
+            if fut and not fut.done():
+                fut.set_exception(RuntimeError(f"CALLERROR {frame[2]}: {frame[3]}"))
+            return
+
         if frame[0] != CALL:
             return
 
@@ -156,15 +164,25 @@ class Simulator:
         await self.ws.send(json.dumps([CALLRESULT, msg_id, {"status": "Accepted"}]))
         logger.info("Unhandled inbound %s → Accepted stub", action)
 
-    async def run(self, connector_count: int) -> None:
-        await self.boot()
-        for cid in range(1, connector_count + 1):
-            await self.status(cid, "Available")
-        logger.info("Simulator ready as %s (%s connectors)", self.id, connector_count)
-
+    async def _read_loop(self) -> None:
         async for raw in self.ws:
             frame = json.loads(raw)
             await self.handle_inbound(frame)
+
+    async def run(self, connector_count: int) -> None:
+        reader = asyncio.create_task(self._read_loop())
+        try:
+            await self.boot()
+            for cid in range(1, connector_count + 1):
+                await self.status(cid, "Available")
+            logger.info("Simulator ready as %s (%s connectors)", self.id, connector_count)
+            await reader
+        finally:
+            reader.cancel()
+            try:
+                await reader
+            except asyncio.CancelledError:
+                pass
 
 
 async def main() -> None:

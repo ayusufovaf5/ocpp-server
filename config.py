@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     log_format: str = Field(default="json", alias="LOG_FORMAT")
 
     pg_host: str = Field(default="localhost", alias="PG_HOST")
-    pg_port: int = Field(default=5432, alias="PG_PORT")
+    pg_port: int = Field(default=5433, alias="PG_PORT")
     pg_user: str = Field(default="opencpo", alias="PG_USER")
     pg_password: str = Field(default="ocpp123", alias="PG_PASSWORD")
     pg_database: str = Field(default="opencpo", alias="PG_DATABASE")
