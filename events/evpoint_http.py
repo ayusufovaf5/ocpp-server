@@ -4,13 +4,22 @@ import asyncio
 import json
 import ssl
 import urllib.request
+from pathlib import Path
 from typing import Any
+
+import structlog
+
+logger = structlog.get_logger(__name__)
 
 
 def create_evpoint_ssl_context(*, ca_bundle: str | None = None) -> ssl.SSLContext:
     context = ssl.create_default_context()
     if ca_bundle:
-        context.load_verify_locations(cafile=ca_bundle)
+        path = Path(ca_bundle)
+        if path.is_file():
+            context.load_verify_locations(cafile=str(path))
+        else:
+            logger.warning("evpoint.ca_bundle_missing", path=ca_bundle)
     if context.verify_mode == ssl.CERT_NONE:
         context.verify_mode = ssl.CERT_REQUIRED
     context.check_hostname = True

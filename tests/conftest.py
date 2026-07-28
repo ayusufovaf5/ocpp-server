@@ -19,7 +19,8 @@ from state.redis_client import set_redis
 
 
 @pytest.fixture(autouse=True)
-def _clear_settings_cache():
+def _clear_settings_cache(monkeypatch):
+    monkeypatch.setenv("EVPOINT_CA_BUNDLE", "")
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()

@@ -119,6 +119,12 @@ def test_create_evpoint_ssl_context_never_returns_cert_none() -> None:
     assert context.check_hostname is True
 
 
+def test_create_evpoint_ssl_context_ignores_missing_ca_bundle() -> None:
+    context = create_evpoint_ssl_context(ca_bundle="/nonexistent/evpoint-ca.pem")
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.check_hostname is True
+
+
 @pytest.mark.asyncio
 async def test_session_started_posts_expected_payload(fake_redis, monkeypatch) -> None:
     monkeypatch.setenv("EVPOINT_PUSH_MAX_ATTEMPTS", "1")
