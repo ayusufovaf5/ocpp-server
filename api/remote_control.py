@@ -6,7 +6,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from auth import Principal, get_current_principal
 from db import get_db_session
 from services.errors import (
     AmbiguousActiveSessionError,
@@ -110,7 +109,6 @@ async def reset_charger(
     charger_id: str,
     body: ResetRequest,
     db: AsyncSession = Depends(get_db_session),
-    _principal: Principal = Depends(get_current_principal),
 ) -> dict[str, Any]:
     return await _run_remote(lambda: RemoteControlService(db).reset(charger_id, body.reset_type))
 
@@ -120,7 +118,6 @@ async def change_availability(
     charger_id: str,
     body: ChangeAvailabilityRequest,
     db: AsyncSession = Depends(get_db_session),
-    _principal: Principal = Depends(get_current_principal),
 ) -> dict[str, Any]:
     return await _run_remote(
         lambda: RemoteControlService(db).change_availability(
@@ -136,7 +133,6 @@ async def unlock_connector(
     charger_id: str,
     body: UnlockConnectorRequest,
     db: AsyncSession = Depends(get_db_session),
-    _principal: Principal = Depends(get_current_principal),
 ) -> dict[str, Any]:
     return await _run_remote(
         lambda: RemoteControlService(db).unlock_connector(charger_id, body.connector_id)
@@ -148,7 +144,6 @@ async def get_configuration(
     charger_id: str,
     key: list[str] = Query(default=[]),
     db: AsyncSession = Depends(get_db_session),
-    _principal: Principal = Depends(get_current_principal),
 ) -> dict[str, Any]:
     try:
         configuration = await RemoteControlService(db).get_configuration(
@@ -171,7 +166,6 @@ async def change_configuration(
     charger_id: str,
     request: Request,
     db: AsyncSession = Depends(get_db_session),
-    _principal: Principal = Depends(get_current_principal),
 ) -> dict[str, Any]:
     body = await request.json()
     if not isinstance(body, dict) or not body:
@@ -189,7 +183,6 @@ async def trigger_message(
     charger_id: str,
     message_type: str,
     db: AsyncSession = Depends(get_db_session),
-    _principal: Principal = Depends(get_current_principal),
 ) -> dict[str, Any]:
     return await _run_remote(
         lambda: RemoteControlService(db).trigger_message(charger_id, message_type)
@@ -201,7 +194,6 @@ async def update_firmware(
     charger_id: str,
     body: UpdateFirmwareRequest,
     db: AsyncSession = Depends(get_db_session),
-    _principal: Principal = Depends(get_current_principal),
 ) -> dict[str, Any]:
     return await _run_remote(
         lambda: RemoteControlService(db).update_firmware(charger_id, body.location)
@@ -213,7 +205,6 @@ async def get_diagnostics(
     charger_id: str,
     body: GetDiagnosticsRequest,
     db: AsyncSession = Depends(get_db_session),
-    _principal: Principal = Depends(get_current_principal),
 ) -> dict[str, Any]:
     return await _run_remote(
         lambda: RemoteControlService(db).get_diagnostics(

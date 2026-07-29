@@ -7,7 +7,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 import db as db_module
-from config import DEV_API_KEY, get_settings
+from config import get_settings
 from db import get_db_session
 from main import create_app
 from ocpp16.app import create_ocpp_app
@@ -15,27 +15,11 @@ from services.charger_service import ChargerService
 
 
 @pytest.mark.asyncio
-async def test_rest_rejects_missing_api_key() -> None:
+async def test_rest_endpoints_are_public_without_api_key() -> None:
     application = create_app()
     transport = ASGITransport(app=application)
     async with AsyncClient(transport=transport, base_url="http://test") as bare:
         response = await bare.get("/version")
-    assert response.status_code == 401
-    assert response.json()["detail"] == "Invalid or missing API key"
-
-
-@pytest.mark.asyncio
-async def test_rest_rejects_wrong_api_key() -> None:
-    application = create_app()
-    transport = ASGITransport(app=application)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.get("/version", headers={"X-API-Key": "wrong-key"})
-    assert response.status_code == 401
-
-
-@pytest.mark.asyncio
-async def test_rest_accepts_valid_api_key(client) -> None:
-    response = await client.get("/version")
     assert response.status_code == 200
 
 
@@ -59,7 +43,7 @@ async def test_health_remains_public() -> None:
 
 
 @pytest.mark.asyncio
-async def test_charger_status_requires_api_key(db_engine) -> None:
+async def test_charger_status_is_public(db_engine) -> None:
     application = create_app()
 
     async def _db():
@@ -69,14 +53,11 @@ async def test_charger_status_requires_api_key(db_engine) -> None:
     application.dependency_overrides[get_db_session] = _db
     transport = ASGITransport(app=application)
     async with AsyncClient(transport=transport, base_url="http://test") as bare:
-        denied = await bare.get("/chargers/CP_X/status")
-        assert denied.status_code == 401
-
         async with db_module.async_session_factory() as session:
             await ChargerService(session).register_boot(
                 charge_point_id="CP_X", vendor="V", model="M"
             )
-        ok = await bare.get("/chargers/CP_X/status", headers={"X-API-Key": DEV_API_KEY})
+        ok = await bare.get("/chargers/CP_X/status")
         assert ok.status_code == 200
     application.dependency_overrides.clear()
 
