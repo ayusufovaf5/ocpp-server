@@ -1,3 +1,5 @@
+from datetime import UTC
+
 import structlog
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,8 +13,16 @@ from repositories.connector_status_repository import ConnectorStatusRepository
 from repositories.session_repository import SessionRepository
 from services.errors import UnknownChargerError
 from services.ops_alerts import emit_ops_alert
-from services.status import normalize_meter_sample
+from services.status import (
+    ENERGY_IMPORT_MEASURANDS,
+    POWER_IMPORT_MEASURANDS,
+    SOC_MEASURANDS,
+    normalize_meter_sample,
+    pick_latest_meter,
+    power_watts_to_kw,
+)
 from state.connection_state import get_connection_state
+from state.pending_remote_starts import get_pending_remote_starts
 
 logger = structlog.get_logger(__name__)
 
@@ -45,6 +55,7 @@ class SessionService:
                 charger.id, connector_id
             )
             if existing is not None:
+                get_pending_remote_starts().take(charge_point_id, connector_id)
                 await self._on_session_started(
                     charge_point_id=charge_point_id,
                     connector_id=connector_id,
@@ -52,6 +63,13 @@ class SessionService:
                     resumed=True,
                 )
                 return existing
+
+            pending = get_pending_remote_starts().take(charge_point_id, connector_id)
+            assigned_tx = None
+            if pending is not None and pending.transaction_id > 0:
+                assigned_tx = pending.transaction_id
+                if pending.id_tag:
+                    id_tag = pending.id_tag
 
             charger_id = charger.id
             try:
@@ -61,6 +79,7 @@ class SessionService:
                     id_tag=id_tag,
                     started_at=parse_ocpp_time(timestamp),
                     meter_start=int(meter_start),
+                    ocpp_transaction_id=assigned_tx,
                 )
                 await self._chargers.set_status(charge_point_id, "Charging", now=utc_now())
                 await self._db.commit()
@@ -136,6 +155,12 @@ class SessionService:
             )
             await self._db.commit()
             await self._db.refresh(row)
+            if row.ocpp_transaction_id is not None:
+                await get_connection_state().set_stopped_ocpp_transaction_for_live(
+                    charge_point_id,
+                    row.connector_id,
+                    row.ocpp_transaction_id,
+                )
             await get_connection_state().clear_active_session(charge_point_id, row.connector_id)
             await get_connection_state().set_connector_status(
                 charge_point_id, row.connector_id, "Available"
@@ -146,6 +171,7 @@ class SessionService:
                     "charge_point_id": charge_point_id,
                     "connector_id": row.connector_id,
                     "status": "Available",
+                    "ocpp_transaction_id": row.ocpp_transaction_id,
                 },
             )
             await get_publisher().publish(
@@ -210,6 +236,13 @@ class SessionService:
                 )
             await self._db.commit()
             for payload in stopped_payloads:
+                ocpp_tx = payload.get("ocpp_transaction_id")
+                if ocpp_tx is not None:
+                    await get_connection_state().set_stopped_ocpp_transaction_for_live(
+                        payload["charge_point_id"],
+                        payload["connector_id"],
+                        int(ocpp_tx),
+                    )
                 await get_connection_state().clear_active_session(
                     payload["charge_point_id"], payload["connector_id"]
                 )
@@ -256,25 +289,20 @@ class SessionService:
                     transaction_id=transaction_id,
                     meter_value=meter_value,
                 )
-                if connector_id:
-                    now = utc_now()
-                    await self._chargers.set_status(charge_point_id, "Available", now=now)
-                    await self._connector_statuses.upsert(
-                        charger_id=charger.id,
-                        connector_id=connector_id,
-                        status="Available",
-                        updated_at=now,
-                    )
-                    await self._db.commit()
-                    await get_connection_state().set_connector_status(
-                        charge_point_id, connector_id, "Available"
-                    )
                 return []
 
             created = await self._persist_meter_entries(charging.id, meter_value)
             await self._chargers.set_status(charge_point_id, "Charging", now=utc_now())
             await self._db.commit()
             if created:
+                meters = await self._sessions.list_meter_values_desc(charging.id)
+                energy = pick_latest_meter(meters, ENERGY_IMPORT_MEASURANDS)
+                soc = pick_latest_meter(meters, SOC_MEASURANDS)
+                power = pick_latest_meter(meters, POWER_IMPORT_MEASURANDS)
+                energy_wh = None if energy is None else float(energy.value)
+                started = charging.started_at
+                if started.tzinfo is None:
+                    started = started.replace(tzinfo=UTC)
                 await get_publisher().publish(
                     EventType.METER_VALUES_RECEIVED,
                     {
@@ -283,6 +311,21 @@ class SessionService:
                         "session_id": charging.id,
                         "ocpp_transaction_id": charging.ocpp_transaction_id,
                         "count": len(created),
+                        "battery": None if soc is None else float(soc.value),
+                        "charging_speed_kw": (
+                            None
+                            if power is None
+                            else power_watts_to_kw(float(power.value), power.unit)
+                        ),
+                        "total_energy_delivered_kwh": (
+                            None
+                            if energy_wh is None
+                            else round(
+                                max(0.0, (energy_wh - charging.meter_start) / 1000.0),
+                                2,
+                            )
+                        ),
+                        "duration_seconds": max(0.0, (utc_now() - started).total_seconds()),
                     },
                 )
             return created
@@ -298,6 +341,9 @@ class SessionService:
         row: ChargingSession,
         resumed: bool,
     ) -> None:
+        await get_connection_state().clear_stopped_ocpp_transaction_for_live(
+            charge_point_id, connector_id
+        )
         await get_connection_state().set_active_session(charge_point_id, connector_id, row.id)
         await get_connection_state().set_connector_status(charge_point_id, connector_id, "Charging")
         await get_publisher().publish(
@@ -310,6 +356,9 @@ class SessionService:
                 "id_tag": row.id_tag,
                 "meter_start": row.meter_start,
                 "resumed": resumed,
+                "charging_speed_kw": 0.0,
+                "total_energy_delivered_kwh": 0.0,
+                "duration_seconds": 0,
             },
         )
 

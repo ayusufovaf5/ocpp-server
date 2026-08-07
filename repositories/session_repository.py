@@ -18,6 +18,7 @@ class SessionRepository:
         id_tag: str,
         started_at: datetime,
         meter_start: int,
+        ocpp_transaction_id: int | None = None,
     ) -> ChargingSession:
         row = ChargingSession(
             charger_id=charger_id,
@@ -30,7 +31,9 @@ class SessionRepository:
         )
         self._db.add(row)
         await self._db.flush()
-        row.ocpp_transaction_id = row.id
+        row.ocpp_transaction_id = (
+            int(ocpp_transaction_id) if ocpp_transaction_id is not None else row.id
+        )
         await self._db.flush()
         return row
 
@@ -116,6 +119,14 @@ class SessionRepository:
             .limit(1)
         )
         return result.scalar_one_or_none()
+
+    async def list_meter_values_desc(self, session_id: int) -> list[MeterValue]:
+        result = await self._db.execute(
+            select(MeterValue)
+            .where(MeterValue.session_id == session_id)
+            .order_by(MeterValue.timestamp.desc(), MeterValue.id.desc())
+        )
+        return list(result.scalars().all())
 
     async def stop(
         self,

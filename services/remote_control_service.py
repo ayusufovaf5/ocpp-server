@@ -13,6 +13,7 @@ from services.errors import (
     NoActiveSessionError,
 )
 from state.connection_registry import get_connection_registry
+from state.pending_remote_starts import get_pending_remote_starts
 
 
 class RemoteControlService:
@@ -193,7 +194,12 @@ class RemoteControlService:
         transaction_id: int,
         timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
-        _ = transaction_id
+        get_pending_remote_starts().put(
+            charge_point_id,
+            connector_id,
+            id_tag=id_tag,
+            transaction_id=transaction_id,
+        )
         return await self.call(
             charge_point_id,
             "RemoteStartTransaction",
@@ -209,8 +215,6 @@ class RemoteControlService:
         connector_id: int | None = None,
         timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
-        _ = transaction_id
-
         charger = await self._chargers.get_by_charge_point_id(charge_point_id)
         if charger is None or charger.disconnected_at is not None:
             raise ChargerOfflineError(charge_point_id)
@@ -218,7 +222,13 @@ class RemoteControlService:
             raise ChargerOfflineError(charge_point_id)
 
         sessions = SessionRepository(self._db)
-        if connector_id is not None:
+        active = None
+        if transaction_id > 0:
+            candidate = await sessions.get_by_ocpp_transaction_id(transaction_id)
+            if candidate is not None and candidate.charger_id == charger.id:
+                active = candidate
+
+        if active is None and connector_id is not None:
             active = await sessions.get_active_by_charger_connector(charger.id, connector_id)
             if active is None:
                 active = await sessions.latest_with_ocpp_transaction_id(
@@ -226,7 +236,7 @@ class RemoteControlService:
                 )
                 if active is None or active.ocpp_transaction_id is None:
                     raise NoActiveSessionError(charge_point_id, connector_id=connector_id)
-        else:
+        elif active is None:
             active_list = await sessions.list_active_by_charger(charger.id)
             if not active_list:
                 active = await sessions.latest_with_ocpp_transaction_id(charger.id)
