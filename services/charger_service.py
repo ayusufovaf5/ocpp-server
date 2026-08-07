@@ -14,6 +14,10 @@ from events.types import EventType
 from repositories.charger_repository import ChargerRepository
 from repositories.connector_status_repository import ConnectorStatusRepository
 from repositories.session_repository import SessionRepository
+from services.evpoint_live_context import (
+    resolve_connector_transaction_id,
+    should_skip_preparing_status_push,
+)
 from services.status import aggregate_station_status, normalize_connector_status
 from state.connection_state import get_connection_state
 
@@ -176,13 +180,24 @@ class ChargerService:
                 await get_connection_state().set_connector_status(
                     charge_point_id, connector_id, normalized
                 )
+                ocpp_transaction_id = await resolve_connector_transaction_id(
+                    self._db,
+                    charge_point_id=charge_point_id,
+                    connector_id=connector_id,
+                    status=normalized,
+                )
+                if should_skip_preparing_status_push(normalized, ocpp_transaction_id):
+                    return charger
+                event_payload: dict = {
+                    "charge_point_id": charge_point_id,
+                    "connector_id": connector_id,
+                    "status": normalized,
+                }
+                if ocpp_transaction_id is not None:
+                    event_payload["ocpp_transaction_id"] = ocpp_transaction_id
                 await get_publisher().publish(
                     EventType.CHARGER_STATUS_CHANGED,
-                    {
-                        "charge_point_id": charge_point_id,
-                        "connector_id": connector_id,
-                        "status": normalized,
-                    },
+                    event_payload,
                 )
             return charger
         except Exception:

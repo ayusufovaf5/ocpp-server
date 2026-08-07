@@ -10,6 +10,14 @@ from events.evpoint_payload import normalize_status
 from repositories.charger_repository import ChargerRepository
 from repositories.connector_status_repository import ConnectorStatusRepository
 from repositories.session_repository import SessionRepository
+from state.connection_state import get_connection_state
+from services.status import (
+    ENERGY_IMPORT_MEASURANDS,
+    POWER_IMPORT_MEASURANDS,
+    SOC_MEASURANDS,
+    pick_latest_meter,
+    power_watts_to_kw,
+)
 
 
 def _duration_seconds(started_at: datetime | None, *, now: datetime) -> float:
@@ -31,14 +39,22 @@ def _connector_payload(
     status: str,
     session: Any | None,
     latest_wh: float | None,
+    battery: float | None,
+    charging_speed_kw: float | None,
     now: datetime,
+    stopped_ocpp_transaction_id: int | None = None,
 ) -> dict[str, Any]:
     if session is not None:
         status = "Charging"
+    transaction_id = (
+        session.ocpp_transaction_id
+        if session is not None
+        else stopped_ocpp_transaction_id
+    )
     return {
         "number": connector_id,
         "status": normalize_status(status),
-        "charging_speed_kw": None,
+        "charging_speed_kw": charging_speed_kw,
         "total_energy_delivered_kwh": (
             None
             if session is None
@@ -47,8 +63,8 @@ def _connector_payload(
         "duration_seconds": (
             0 if session is None else _duration_seconds(session.started_at, now=now)
         ),
-        "transaction_id": None if session is None else session.ocpp_transaction_id,
-        "battery": None,
+        "transaction_id": transaction_id,
+        "battery": battery,
     }
 
 
@@ -59,6 +75,22 @@ class LiveStatusService:
         self._connectors = ConnectorStatusRepository(db)
         self._sessions = SessionRepository(db)
 
+    async def _session_live_metrics(
+        self, session: Any
+    ) -> tuple[float | None, float | None, float | None]:
+        meters = await self._sessions.list_meter_values_desc(session.id)
+        energy = pick_latest_meter(meters, ENERGY_IMPORT_MEASURANDS)
+        soc = pick_latest_meter(meters, SOC_MEASURANDS)
+        power = pick_latest_meter(meters, POWER_IMPORT_MEASURANDS)
+        latest_wh = None if energy is None else float(energy.value)
+        battery = None if soc is None else float(soc.value)
+        speed = (
+            None
+            if power is None
+            else power_watts_to_kw(float(power.value), power.unit)
+        )
+        return latest_wh, battery, speed
+
     async def build_timed_live_payload(self, *, now: datetime | None = None) -> dict[str, Any]:
         when = now or utc_now()
         chargers = await self._chargers.list_all()
@@ -67,6 +99,7 @@ class LiveStatusService:
         for session in active_sessions:
             active_by_charger.setdefault(session.charger_id, {})[session.connector_id] = session
 
+        connection_state = get_connection_state()
         chargers_out: list[dict[str, Any]] = []
         for charger in chargers:
             rows = await self._connectors.list_by_charger(charger.id)
@@ -75,28 +108,38 @@ class LiveStatusService:
                 if row.connector_id == 0:
                     continue
                 session = active_by_charger.get(charger.id, {}).get(row.connector_id)
-                latest = None
+                stopped_tx = None
+                if session is None:
+                    stopped_tx = await connection_state.peek_stopped_ocpp_transaction_for_live(
+                        charger.charge_point_id,
+                        row.connector_id,
+                        now=when,
+                    )
+                latest_wh = battery = speed = None
                 if session is not None:
-                    mv = await self._sessions.latest_meter_value(session.id)
-                    latest = None if mv is None else float(mv.value)
+                    latest_wh, battery, speed = await self._session_live_metrics(session)
                 by_connector[row.connector_id] = _connector_payload(
                     connector_id=row.connector_id,
                     status=row.status,
                     session=session,
-                    latest_wh=latest,
+                    latest_wh=latest_wh,
+                    battery=battery,
+                    charging_speed_kw=speed,
                     now=when,
+                    stopped_ocpp_transaction_id=stopped_tx,
                 )
 
             for connector_id, session in active_by_charger.get(charger.id, {}).items():
                 if connector_id in by_connector:
                     continue
-                mv = await self._sessions.latest_meter_value(session.id)
-                latest = None if mv is None else float(mv.value)
+                latest_wh, battery, speed = await self._session_live_metrics(session)
                 by_connector[connector_id] = _connector_payload(
                     connector_id=connector_id,
                     status="Charging",
                     session=session,
-                    latest_wh=latest,
+                    latest_wh=latest_wh,
+                    battery=battery,
+                    charging_speed_kw=speed,
                     now=when,
                 )
 

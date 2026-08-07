@@ -22,7 +22,6 @@ from services.status import (
     power_watts_to_kw,
 )
 from state.connection_state import get_connection_state
-from state.pending_remote_starts import get_pending_remote_starts
 
 logger = structlog.get_logger(__name__)
 
@@ -55,7 +54,9 @@ class SessionService:
                 charger.id, connector_id
             )
             if existing is not None:
-                get_pending_remote_starts().take(charge_point_id, connector_id)
+                await get_connection_state().take_pending_remote_start(
+                    charge_point_id, connector_id
+                )
                 await self._on_session_started(
                     charge_point_id=charge_point_id,
                     connector_id=connector_id,
@@ -64,7 +65,9 @@ class SessionService:
                 )
                 return existing
 
-            pending = get_pending_remote_starts().take(charge_point_id, connector_id)
+            pending = await get_connection_state().take_pending_remote_start(
+                charge_point_id, connector_id
+            )
             assigned_tx = None
             if pending is not None and pending.transaction_id > 0:
                 assigned_tx = pending.transaction_id

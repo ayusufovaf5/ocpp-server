@@ -176,11 +176,33 @@ async def test_timed_live_details_two_clients_both_see_events(ocpp_http_server, 
                 timestamp=utc_now_iso(),
                 connector_id=1,
             )
-            after = await _read_json_line(lines_b, timeout=5.0)
-            chargers = {c["charger_id"]: c for c in after["chargers"]}
+            after_stop = await _read_json_line(lines_b, timeout=5.0)
+            chargers = {c["charger_id"]: c for c in after_stop["chargers"]}
+            match = next(c for c in chargers["CP_FANOUT"]["connectors"] if c["number"] == 1)
+            assert match["transaction_id"] == session.ocpp_transaction_id
+            assert match["status"] == "Available"
+
+            from datetime import timedelta
+
+            from config import get_settings
+            from db.time import utc_now
+            from state.connection_state import get_connection_state
+
+            grace = get_settings().evpoint_live_tx_grace_seconds
+            await get_connection_state().set_stopped_ocpp_transaction_for_live(
+                "CP_FANOUT",
+                1,
+                session.ocpp_transaction_id,
+                available_since=utc_now() - timedelta(seconds=grace + 1),
+            )
+            await ChargerService(db_session).update_status(
+                "CP_FANOUT", "Available", connector_id=1
+            )
+            after_clear = await _read_json_line(lines_b, timeout=5.0)
+            chargers = {c["charger_id"]: c for c in after_clear["chargers"]}
             match = next(c for c in chargers["CP_FANOUT"]["connectors"] if c["number"] == 1)
             assert match["transaction_id"] is None
-            assert match["status"] != "Charging"
+            assert match["status"] == "Available"
         finally:
             if stream_a is not None:
                 await stream_a.__aexit__(None, None, None)

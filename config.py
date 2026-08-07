@@ -55,6 +55,10 @@ class Settings(BaseSettings):
         default=60,
         alias="STALE_STATUS_REMAP_WINDOW_SECONDS",
     )
+    evpoint_live_tx_grace_seconds: int = Field(
+        default=15,
+        alias="EVPOINT_LIVE_TX_GRACE_SECONDS",
+    )
 
     evpoint_live_update_url: str = Field(
         default="http://localhost:5055/Charging/ocpp-live-update",

@@ -13,7 +13,7 @@ from services.errors import (
     NoActiveSessionError,
 )
 from state.connection_registry import get_connection_registry
-from state.pending_remote_starts import get_pending_remote_starts
+from state.connection_state import get_connection_state
 
 
 class RemoteControlService:
@@ -194,7 +194,7 @@ class RemoteControlService:
         transaction_id: int,
         timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
-        get_pending_remote_starts().put(
+        await get_connection_state().set_pending_remote_start(
             charge_point_id,
             connector_id,
             id_tag=id_tag,
