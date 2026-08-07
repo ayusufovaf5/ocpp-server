@@ -18,8 +18,9 @@ x-app-env: &app-env
   OFFLINE_SESSION_GRACE_PERIOD_SECONDS: ${OFFLINE_SESSION_GRACE_PERIOD_SECONDS:-300}
   API_KEY: ${API_KEY:-dev-api-key-change-me}
   OCPP_CHARGE_POINT_ALLOWLIST: ${OCPP_CHARGE_POINT_ALLOWLIST:-*}
-  EVPOINT_LIVE_UPDATE_URL: ${EVPOINT_LIVE_UPDATE_URL:-https://host.docker.internal:7183/Charging/ocpp-live-update}
+  EVPOINT_LIVE_UPDATE_URL: ${EVPOINT_LIVE_UPDATE_URL:-http://host.docker.internal:5055/Charging/ocpp-live-update}
   EVPOINT_CA_BUNDLE: ${EVPOINT_CA_BUNDLE:-}
+  EVPOINT_SSL_VERIFY: ${EVPOINT_SSL_VERIFY:-false}
   EVPOINT_PUSH_MAX_ATTEMPTS: ${EVPOINT_PUSH_MAX_ATTEMPTS:-3}
   EVPOINT_PUSH_BACKOFF_SECONDS: ${EVPOINT_PUSH_BACKOFF_SECONDS:-0.5}
   EVPOINT_PUSH_TIMEOUT_SECONDS: ${EVPOINT_PUSH_TIMEOUT_SECONDS:-5}
@@ -76,8 +77,9 @@ services:
 
   ocpp16:
     build: .
+    # Host 9010 so EvPointOCPP can own Windows port 9000.
     ports:
-      - "${OCPP16_PORT:-9000}:9000"
+      - "${OCPP16_PORT:-9010}:9000"
     environment:
       <<: *app-env
     extra_hosts:

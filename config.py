@@ -57,10 +57,11 @@ class Settings(BaseSettings):
     )
 
     evpoint_live_update_url: str = Field(
-        default="https://localhost:7183/Charging/ocpp-live-update",
+        default="http://localhost:5055/Charging/ocpp-live-update",
         alias="EVPOINT_LIVE_UPDATE_URL",
     )
     evpoint_ca_bundle: str | None = Field(default=None, alias="EVPOINT_CA_BUNDLE")
+    evpoint_ssl_verify: bool = Field(default=True, alias="EVPOINT_SSL_VERIFY")
     evpoint_push_max_attempts: int = Field(default=3, alias="EVPOINT_PUSH_MAX_ATTEMPTS")
     evpoint_push_backoff_seconds: float = Field(
         default=0.5,

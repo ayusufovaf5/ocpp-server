@@ -53,7 +53,8 @@ class EvpointPushConsumer(EventConsumer):
         self._backoff_seconds = max(0.0, settings.evpoint_push_backoff_seconds)
         self._timeout_seconds = settings.evpoint_push_timeout_seconds
         self._ssl_context = ssl_context or create_evpoint_ssl_context(
-            ca_bundle=settings.evpoint_ca_bundle
+            ca_bundle=settings.evpoint_ca_bundle,
+            verify=settings.evpoint_ssl_verify,
         )
         self._http_post = http_post or self._default_http_post
 

@@ -12,7 +12,23 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 
-def create_evpoint_ssl_context(*, ca_bundle: str | None = None) -> ssl.SSLContext:
+def create_evpoint_ssl_context(
+    *,
+    ca_bundle: str | None = None,
+    verify: bool = True,
+) -> ssl.SSLContext:
+    """Build TLS context for EvPoint live-update pushes.
+
+    Local EvPoint often uses a self-signed HTTPS cert (e.g. :7183). Set
+    ``verify=False`` (env ``EVPOINT_SSL_VERIFY=false``) for that case.
+    Production should keep verify enabled and optionally supply ``ca_bundle``.
+    """
+    if not verify:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        return context
+
     context = ssl.create_default_context()
     if ca_bundle:
         path = Path(ca_bundle)
@@ -20,8 +36,7 @@ def create_evpoint_ssl_context(*, ca_bundle: str | None = None) -> ssl.SSLContex
             context.load_verify_locations(cafile=str(path))
         else:
             logger.warning("evpoint.ca_bundle_missing", path=ca_bundle)
-    if context.verify_mode == ssl.CERT_NONE:
-        context.verify_mode = ssl.CERT_REQUIRED
+    context.verify_mode = ssl.CERT_REQUIRED
     context.check_hostname = True
     return context
 
@@ -30,7 +45,7 @@ def post_live_update_sync(
     url: str,
     payload: dict[str, Any],
     *,
-    ssl_context: ssl.SSLContext,
+    ssl_context: ssl.SSLContext | None,
     timeout_seconds: float,
 ) -> int:
     body = json.dumps(payload).encode("utf-8")
@@ -40,6 +55,7 @@ def post_live_update_sync(
         headers={"Content-Type": "application/json"},
         method="POST",
     )
+    # HTTP URLs ignore context; HTTPS uses the configured verify mode.
     with urllib.request.urlopen(request, context=ssl_context, timeout=timeout_seconds) as response:
         return int(response.status)
 
@@ -48,7 +64,7 @@ async def post_live_update(
     url: str,
     payload: dict[str, Any],
     *,
-    ssl_context: ssl.SSLContext,
+    ssl_context: ssl.SSLContext | None,
     timeout_seconds: float,
 ) -> int:
     return await asyncio.to_thread(
