@@ -77,7 +77,6 @@ services:
 
   ocpp16:
     build: .
-    # Host 9010 so EvPointOCPP can own Windows port 9000.
     ports:
       - "${OCPP16_PORT:-9010}:9000"
     environment:

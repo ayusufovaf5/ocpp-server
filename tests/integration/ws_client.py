@@ -84,6 +84,21 @@ class SimulatedChargePoint:
         raw = await asyncio.wait_for(self.ws.recv(), timeout=timeout)
         return json.loads(raw)
 
+    async def expect_call(
+        self,
+        action: str,
+        *,
+        timeout: float = DEFAULT_RECV_TIMEOUT,
+    ) -> tuple[str, dict[str, Any]]:
+        frame = await self.recv_frame(timeout=timeout)
+        assert frame[0] == CALL, frame
+        assert frame[2] == action, frame
+        assert isinstance(frame[3], dict), frame
+        return str(frame[1]), frame[3]
+
+    async def send_result(self, unique_id: str, payload: dict[str, Any]) -> None:
+        await self.ws.send(json.dumps([CALLRESULT, unique_id, payload]))
+
     async def boot(
         self,
         *,
@@ -137,7 +152,17 @@ class SimulatedChargePoint:
         energy_wh: float,
         *,
         connector_id: int = 1,
+        extra_samples: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
+        samples: list[dict[str, Any]] = [
+            {
+                "value": str(energy_wh),
+                "measurand": "Energy.Active.Import.Register",
+                "unit": "Wh",
+            }
+        ]
+        if extra_samples:
+            samples.extend(extra_samples)
         return await self.call(
             "MeterValues",
             {
@@ -146,13 +171,7 @@ class SimulatedChargePoint:
                 "meterValue": [
                     {
                         "timestamp": utc_now_iso(),
-                        "sampledValue": [
-                            {
-                                "value": str(energy_wh),
-                                "measurand": "Energy.Active.Import.Register",
-                                "unit": "Wh",
-                            }
-                        ],
+                        "sampledValue": samples,
                     }
                 ],
             },

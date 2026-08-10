@@ -31,7 +31,10 @@ class Simulator:
         self.ws = ws
         self.known_connectors: set[int] = set()
         self.active_tx: dict[int, int] = {}
+        self._meter_tasks: dict[int, asyncio.Task] = {}
         self._pending: dict[str, asyncio.Future] = {}
+        self._energy_wh: dict[int, float] = {}
+        self._soc: dict[int, float] = {}
 
     async def send_call(self, action: str, payload: dict) -> dict:
         msg_id = _uid()
@@ -75,17 +78,87 @@ class Simulator:
             logger.info("StartTransaction OK tx=%s connector=%s", tx, connector_id)
 
     async def stop_transaction(self, transaction_id: int, connector_id: int) -> None:
+        self._stop_meter_loop(connector_id)
+        energy = self._energy_wh.get(connector_id, 1000)
         await self.send_call(
             "StopTransaction",
             {
                 "transactionId": transaction_id,
-                "meterStop": 1000,
+                "meterStop": int(energy),
                 "timestamp": _now(),
                 "reason": "Remote",
             },
         )
         self.active_tx.pop(connector_id, None)
+        self._energy_wh.pop(connector_id, None)
+        self._soc.pop(connector_id, None)
         logger.info("StopTransaction OK tx=%s", transaction_id)
+
+    async def send_meter_values(self, connector_id: int, transaction_id: int) -> None:
+        energy = self._energy_wh.get(connector_id, 0.0)
+        soc = self._soc.get(connector_id, 20.0)
+        await self.send_call(
+            "MeterValues",
+            {
+                "connectorId": connector_id,
+                "transactionId": transaction_id,
+                "meterValue": [
+                    {
+                        "timestamp": _now(),
+                        "sampledValue": [
+                            {
+                                "value": f"{energy:.0f}",
+                                "measurand": "Energy.Active.Import.Register",
+                                "unit": "Wh",
+                            },
+                            {
+                                "value": "7200",
+                                "measurand": "Power.Active.Import",
+                                "unit": "W",
+                            },
+                            {
+                                "value": f"{soc:.0f}",
+                                "measurand": "SoC",
+                                "unit": "Percent",
+                            },
+                        ],
+                    }
+                ],
+            },
+        )
+        logger.info(
+            "MeterValues sent tx=%s energy=%.0fWh (%.2fkWh) soc=%.0f",
+            transaction_id,
+            energy,
+            energy / 1000.0,
+            soc,
+        )
+
+    def _stop_meter_loop(self, connector_id: int) -> None:
+        task = self._meter_tasks.pop(connector_id, None)
+        if task is not None and not task.done():
+            task.cancel()
+
+    def _start_meter_loop(self, connector_id: int, transaction_id: int) -> None:
+        self._stop_meter_loop(connector_id)
+        self._energy_wh[connector_id] = 0.0
+        self._soc[connector_id] = 20.0
+
+        async def loop() -> None:
+            interval_s = 5.0
+            wh_per_tick = 7.2 * 1000.0 * (interval_s / 3600.0)
+            try:
+                while connector_id in self.active_tx:
+                    await self.send_meter_values(connector_id, transaction_id)
+                    await asyncio.sleep(interval_s)
+                    self._energy_wh[connector_id] = self._energy_wh.get(connector_id, 0.0) + wh_per_tick
+                    self._soc[connector_id] = min(
+                        100.0, self._soc.get(connector_id, 20.0) + 0.15
+                    )
+            except asyncio.CancelledError:
+                return
+
+        self._meter_tasks[connector_id] = asyncio.create_task(loop())
 
     async def handle_inbound(self, frame: list) -> None:
         if frame[0] == CALLRESULT:
@@ -116,6 +189,9 @@ class Simulator:
                 await self.status(connector_id, "Preparing")
                 await self.start_transaction(connector_id, id_tag)
                 await self.status(connector_id, "Charging")
+                tx = self.active_tx.get(connector_id)
+                if tx is not None:
+                    self._start_meter_loop(connector_id, tx)
 
             asyncio.create_task(follow_up())
             return

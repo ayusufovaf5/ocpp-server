@@ -17,12 +17,6 @@ def create_evpoint_ssl_context(
     ca_bundle: str | None = None,
     verify: bool = True,
 ) -> ssl.SSLContext:
-    """Build TLS context for EvPoint live-update pushes.
-
-    Local EvPoint often uses a self-signed HTTPS cert (e.g. :7183). Set
-    ``verify=False`` (env ``EVPOINT_SSL_VERIFY=false``) for that case.
-    Production should keep verify enabled and optionally supply ``ca_bundle``.
-    """
     if not verify:
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         context.check_hostname = False
@@ -55,7 +49,6 @@ def post_live_update_sync(
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    # HTTP URLs ignore context; HTTPS uses the configured verify mode.
     with urllib.request.urlopen(request, context=ssl_context, timeout=timeout_seconds) as response:
         return int(response.status)
 
