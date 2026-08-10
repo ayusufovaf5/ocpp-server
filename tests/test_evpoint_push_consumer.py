@@ -69,6 +69,12 @@ def test_tls_verification_is_explicitly_enabled() -> None:
     assert context.verify_mode != ssl.CERT_NONE
 
 
+def test_create_evpoint_ssl_context_can_disable_verification_for_local_dev() -> None:
+    context = create_evpoint_ssl_context(verify=False)
+    assert context.verify_mode == ssl.CERT_NONE
+    assert context.check_hostname is False
+
+
 def test_post_live_update_uses_verifying_ssl_context(monkeypatch) -> None:
     seen: dict[str, Any] = {}
 
@@ -113,7 +119,7 @@ def test_post_live_update_uses_verifying_ssl_context(monkeypatch) -> None:
     assert seen["check_hostname"] is True
 
 
-def test_create_evpoint_ssl_context_never_returns_cert_none() -> None:
+def test_create_evpoint_ssl_context_never_returns_cert_none_by_default() -> None:
     context = create_evpoint_ssl_context()
     assert context.verify_mode == ssl.CERT_REQUIRED
     assert context.check_hostname is True
@@ -240,3 +246,55 @@ def test_charger_details_from_session_started() -> None:
     )
     assert details["connectors"][0]["status"] == "Charging"
     assert details["connectors"][0]["transaction_id"] == 7
+    assert details["connectors"][0]["charging_speed_kw"] == 0.0
+    assert details["connectors"][0]["total_energy_delivered_kwh"] == 0.0
+
+
+def test_charger_details_from_meter_values_keeps_charging_status() -> None:
+    details = charger_details_from_event(
+        EventType.METER_VALUES_RECEIVED,
+        {
+            "connector_id": 1,
+            "ocpp_transaction_id": 1780646093,
+            "charging_speed_kw": 7.2,
+            "total_energy_delivered_kwh": 0.12,
+            "battery": 40.0,
+            "duration_seconds": 60,
+        },
+    )
+    connector = details["connectors"][0]
+    assert connector["status"] == "Charging"
+    assert connector["transaction_id"] == 1780646093
+    assert connector["charging_speed_kw"] == 7.2
+    assert connector["total_energy_delivered_kwh"] == 0.12
+    body = build_payload("test", details)
+    assert body["chargers"][0]["connectors"][0]["status"] == "Charging"
+
+
+def test_charging_status_seeds_zero_metrics_for_evpoint() -> None:
+    details = charger_details_from_event(
+        EventType.CHARGER_STATUS_CHANGED,
+        {
+            "connector_id": 1,
+            "status": "Charging",
+            "ocpp_transaction_id": 42,
+        },
+    )
+    connector = details["connectors"][0]
+    assert connector["charging_speed_kw"] == 0.0
+    assert connector["total_energy_delivered_kwh"] == 0.0
+
+
+def test_charger_details_from_available_after_stop_keeps_transaction_id() -> None:
+    details = charger_details_from_event(
+        EventType.CHARGER_STATUS_CHANGED,
+        {
+            "connector_id": 1,
+            "status": "Available",
+            "ocpp_transaction_id": 1780646080,
+        },
+    )
+    body = build_payload("test", details)
+    connector = body["chargers"][0]["connectors"][0]
+    assert connector["status"] == "Available"
+    assert connector["transaction_id"] == 1780646080

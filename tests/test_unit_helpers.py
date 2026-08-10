@@ -4,9 +4,13 @@ import pytest
 
 from ocpp16 import protocol
 from services.status import (
+    ENERGY_IMPORT_MEASURANDS,
+    SOC_MEASURANDS,
     aggregate_station_status,
     normalize_connector_status,
     normalize_meter_sample,
+    pick_latest_meter,
+    power_watts_to_kw,
 )
 
 
@@ -77,3 +81,23 @@ def test_normalize_meter_sample(
     expected_unit: str | None,
 ) -> None:
     assert normalize_meter_sample(value, unit) == (expected_value, expected_unit)
+
+
+def test_power_watts_to_kw() -> None:
+    assert power_watts_to_kw(7200.0, "W") == 7.2
+    assert power_watts_to_kw(7.2, "kW") == 7.2
+
+
+def test_pick_latest_meter() -> None:
+    class Row:
+        def __init__(self, measurand: str, value: float) -> None:
+            self.measurand = measurand
+            self.value = value
+
+    meters = [
+        Row("SoC", 55.0),
+        Row("Energy.Active.Import.Register", 1000.0),
+    ]
+    assert pick_latest_meter(meters, SOC_MEASURANDS).value == 55.0
+    assert pick_latest_meter(meters, ENERGY_IMPORT_MEASURANDS).value == 1000.0
+    assert pick_latest_meter(meters, frozenset({"Power.Active.Import"})) is None

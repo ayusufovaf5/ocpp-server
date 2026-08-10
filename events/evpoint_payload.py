@@ -71,6 +71,8 @@ def charger_details_from_event(
     if status is None:
         if event_type == EventType.SESSION_STARTED:
             status = "Charging"
+        elif event_type == EventType.METER_VALUES_RECEIVED:
+            status = "Charging"
         elif event_type == EventType.SESSION_STOPPED:
             status = "Available"
         else:
@@ -80,13 +82,21 @@ def charger_details_from_event(
     if transaction_id is None:
         transaction_id = payload.get("ocpp_transaction_id")
 
+    charging_speed_kw = payload.get("charging_speed_kw")
+    total_energy_delivered_kwh = payload.get("total_energy_delivered_kwh")
+    if normalize_status(status) == "Charging":
+        if charging_speed_kw is None:
+            charging_speed_kw = 0.0
+        if total_energy_delivered_kwh is None:
+            total_energy_delivered_kwh = 0.0
+
     return {
         "connectors": [
             {
                 "number": connector_id,
                 "status": status,
-                "charging_speed_kw": payload.get("charging_speed_kw"),
-                "total_energy_delivered_kwh": payload.get("total_energy_delivered_kwh"),
+                "charging_speed_kw": charging_speed_kw,
+                "total_energy_delivered_kwh": total_energy_delivered_kwh,
                 "duration_seconds": payload.get("duration_seconds", 0),
                 "transaction_id": transaction_id,
                 "battery": payload.get("battery"),

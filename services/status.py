@@ -8,6 +8,15 @@ _BUSY_PRIORITY = {
     "Reserved": 50,
 }
 
+ENERGY_IMPORT_MEASURANDS = frozenset(
+    {
+        "Energy.Active.Import.Register",
+        "Energy.Active.Import.Interval",
+    }
+)
+SOC_MEASURANDS = frozenset({"SoC"})
+POWER_IMPORT_MEASURANDS = frozenset({"Power.Active.Import"})
+
 
 def normalize_connector_status(status: str) -> str:
     mapping = {
@@ -39,3 +48,19 @@ def normalize_meter_sample(value: float, unit: str | None) -> tuple[float, str |
     if unit == "kW":
         return value * 1000.0, "W"
     return value, unit
+
+
+def power_watts_to_kw(value: float, unit: str | None) -> float:
+    if unit == "kW":
+        return round(value, 3)
+    return round(value / 1000.0, 3)
+
+
+def pick_latest_meter(
+    meters: list,
+    measurands: frozenset[str],
+):
+    for meter in meters:
+        if (meter.measurand or "") in measurands:
+            return meter
+    return None
