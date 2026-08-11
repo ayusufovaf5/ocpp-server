@@ -8,7 +8,6 @@ import uvicorn
 import websockets
 from httpx import AsyncClient
 
-from config import DEV_API_KEY
 from db.time import utc_now_iso
 from events.publisher import STREAM_NAME
 from events.types import EventType
@@ -114,7 +113,6 @@ async def test_get_diagnostics_happy_path_via_rest_and_ws(ocpp_http_server, db_s
         reply_task = asyncio.create_task(station_loop())
         async with AsyncClient(
             base_url=ocpp_http_server["http"],
-            headers={"X-API-Key": DEV_API_KEY},
         ) as client:
             response = await client.post(
                 f"/get-diagnostics/{charge_point_id}",
@@ -147,10 +145,7 @@ async def test_get_diagnostics_offline_returns_404(ocpp_http_server, db_session)
         charge_point_id=charge_point_id, vendor="V", model="M"
     )
 
-    async with AsyncClient(
-        base_url=ocpp_http_server["http"],
-        headers={"X-API-Key": DEV_API_KEY},
-    ) as client:
+    async with AsyncClient(base_url=ocpp_http_server["http"]) as client:
         response = await client.post(
             f"/get-diagnostics/{charge_point_id}",
             json={"location": "ftp://diagnostics.example/upload"},

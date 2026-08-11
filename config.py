@@ -3,7 +3,6 @@ from functools import lru_cache
 from pydantic import Field, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-DEV_API_KEY = "dev-api-key-change-me"
 DEV_OCPP_ALLOWLIST = "*"
 
 
@@ -30,7 +29,6 @@ class Settings(BaseSettings):
     redis_url: str = Field(default="redis://localhost:6379/0", alias="REDIS_URL")
     redis_state_ttl_seconds: int = Field(default=86400, alias="REDIS_STATE_TTL_SECONDS")
 
-    api_key: str = Field(default=DEV_API_KEY, alias="API_KEY")
     ocpp_charge_point_allowlist: str = Field(
         default=DEV_OCPP_ALLOWLIST,
         alias="OCPP_CHARGE_POINT_ALLOWLIST",

@@ -8,7 +8,6 @@ import uvicorn
 import websockets
 from httpx import AsyncClient
 
-from config import DEV_API_KEY
 from ocpp16.app import create_ocpp_app
 from ocpp16.protocol import MessageType
 from services.charger_service import ChargerService
@@ -122,7 +121,6 @@ async def test_get_and_change_configuration_happy_path_via_rest_and_ws(
         reply_task = asyncio.create_task(station_loop())
         async with AsyncClient(
             base_url=ocpp_http_server["http"],
-            headers={"X-API-Key": DEV_API_KEY},
         ) as client:
             get_resp = await client.get(
                 f"/{charge_point_id}/configuration",

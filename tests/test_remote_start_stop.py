@@ -8,7 +8,6 @@ import uvicorn
 import websockets
 from httpx import AsyncClient
 
-from config import DEV_API_KEY
 from db.time import utc_now_iso
 from ocpp16.app import create_ocpp_app
 from ocpp16.protocol import MessageType
@@ -132,9 +131,8 @@ async def test_remote_start_offline_returns_404(ocpp_http_server, db_session) ->
     )
 
     async with AsyncClient(
-        base_url=ocpp_http_server["http"],
-        headers={"X-API-Key": DEV_API_KEY},
-    ) as client:
+            base_url=ocpp_http_server["http"],
+        ) as client:
         response = await client.post(
             f"/start/{charge_point_id}",
             json={
@@ -153,9 +151,8 @@ async def test_remote_start_offline_returns_404(ocpp_http_server, db_session) ->
 @pytest.mark.asyncio
 async def test_remote_start_unknown_charger_returns_404(ocpp_http_server) -> None:
     async with AsyncClient(
-        base_url=ocpp_http_server["http"],
-        headers={"X-API-Key": DEV_API_KEY},
-    ) as client:
+            base_url=ocpp_http_server["http"],
+        ) as client:
         response = await client.post(
             "/start/CP_UNKNOWN",
             json={
@@ -199,7 +196,6 @@ async def test_remote_stop_without_active_session_does_not_call_station(
         reply_task = asyncio.create_task(station_loop())
         async with AsyncClient(
             base_url=ocpp_http_server["http"],
-            headers={"X-API-Key": DEV_API_KEY},
         ) as client:
             response = await client.post(
                 f"/stop/{charge_point_id}",
@@ -451,8 +447,7 @@ async def test_remote_start_stop_full_station_cycle_station_stop_reason(
                 return
 
         loop_task = asyncio.create_task(station_loop())
-        headers = {"X-API-Key": DEV_API_KEY}
-        async with AsyncClient(base_url=ocpp_http_server["http"], headers=headers) as client:
+        async with AsyncClient(base_url=ocpp_http_server["http"]) as client:
             start = await client.post(
                 f"/start/{charge_point_id}",
                 json={"connector_id": 1, "id_tag": "ADMIN", "transaction_id": 4242},
