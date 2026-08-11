@@ -77,6 +77,7 @@ class ChargingSession(Base):
     id_tag: Mapped[str] = mapped_column(String(255), nullable=False)
     ocpp_transaction_id: Mapped[int | None] = mapped_column(Integer, unique=True, nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_meter_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     stopped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     meter_start: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     meter_stop: Mapped[int | None] = mapped_column(Integer, nullable=True)

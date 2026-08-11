@@ -1,7 +1,8 @@
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from db.models import ChargingSession, MeterValue
 
@@ -97,6 +98,24 @@ class SessionRepository:
     async def list_all_active(self) -> list[ChargingSession]:
         result = await self._db.execute(
             select(ChargingSession).where(ChargingSession.status == "Active")
+        )
+        return list(result.scalars().all())
+
+    async def list_active_stale_by_meter(
+        self,
+        before: datetime,
+    ) -> list[ChargingSession]:
+        activity_at = func.coalesce(
+            ChargingSession.last_meter_at,
+            ChargingSession.started_at,
+        )
+        result = await self._db.execute(
+            select(ChargingSession)
+            .where(
+                ChargingSession.status == "Active",
+                activity_at < before,
+            )
+            .options(selectinload(ChargingSession.charger))
         )
         return list(result.scalars().all())
 

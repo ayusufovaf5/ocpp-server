@@ -8,7 +8,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 import db as db_module
-from config import DEV_API_KEY, get_settings
+from config import get_settings
 from db import Base, get_db_session
 from events.publisher import EventPublisher, set_publisher
 from main import create_app
@@ -65,8 +65,7 @@ def app():
 @pytest.fixture
 async def client(app) -> AsyncGenerator[AsyncClient, None]:
     transport = ASGITransport(app=app)
-    headers = {"X-API-Key": DEV_API_KEY}
-    async with AsyncClient(transport=transport, base_url="http://test", headers=headers) as ac:
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
 
 

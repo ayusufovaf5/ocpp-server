@@ -11,6 +11,7 @@ from events.types import EventType
 from repositories.charger_repository import ChargerRepository
 from repositories.connector_status_repository import ConnectorStatusRepository
 from repositories.session_repository import SessionRepository
+from services.charging_session_timeout_watcher import ChargingSessionTimeoutWatcher
 from services.errors import UnknownChargerError
 from services.ops_alerts import emit_ops_alert
 from services.status import (
@@ -27,6 +28,7 @@ logger = structlog.get_logger(__name__)
 
 END_REASON_STATION_STOP = "station_stop"
 END_REASON_CONNECTION_TIMEOUT = "connection_timeout"
+END_REASON_REMOTE_STOP = "remote_stop"
 
 
 class SessionService:
@@ -84,6 +86,7 @@ class SessionService:
                     meter_start=int(meter_start),
                     ocpp_transaction_id=assigned_tx,
                 )
+                ChargingSessionTimeoutWatcher(self._db).arm(row)
                 await self._chargers.set_status(charge_point_id, "Charging", now=utc_now())
                 await self._db.commit()
                 await self._db.refresh(row)
@@ -141,6 +144,20 @@ class SessionService:
 
             if transaction_data:
                 await self._persist_meter_entries(row.id, transaction_data)
+
+            if row.status == "Completed":
+                if meter_stop is not None and row.meter_stop != int(meter_stop):
+                    row.meter_stop = int(meter_stop)
+                    row.meter_stop_estimated = False
+                    await self._db.commit()
+                    await self._db.refresh(row)
+                if row.ocpp_transaction_id is not None:
+                    await get_connection_state().set_stopped_ocpp_transaction_for_live(
+                        charge_point_id,
+                        row.connector_id,
+                        row.ocpp_transaction_id,
+                    )
+                return row
 
             await self._sessions.stop(
                 row,

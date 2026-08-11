@@ -18,6 +18,7 @@ from ocpp16.handler import Ocpp16Handler
 from services.charger_service import ChargerService
 from services.errors import ChargerOfflineError
 from state.connection_registry import get_connection_registry
+from tasks.charging_session_timeout_monitor import run_charging_session_timeout_monitor
 from tasks.heartbeat_monitor import run_heartbeat_monitor
 from tasks.offline_session_monitor import run_offline_session_monitor
 
@@ -31,6 +32,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     log_dev_auth_warnings()
     heartbeat = asyncio.create_task(run_heartbeat_monitor())
     offline = asyncio.create_task(run_offline_session_monitor())
+    session_timeout = asyncio.create_task(run_charging_session_timeout_monitor())
     logging_consumer = LoggingConsumer()
     evpoint_consumer = EvpointPushConsumer()
     consumer_task = asyncio.create_task(logging_consumer.run())
@@ -41,7 +43,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     finally:
         logging_consumer.stop()
         evpoint_consumer.stop()
-        for task in (heartbeat, offline, consumer_task, evpoint_task):
+        for task in (heartbeat, offline, session_timeout, consumer_task, evpoint_task):
             task.cancel()
             try:
                 await task

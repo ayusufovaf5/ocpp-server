@@ -44,6 +44,10 @@ class Settings(BaseSettings):
         default=300,
         alias="OFFLINE_SESSION_GRACE_PERIOD_SECONDS",
     )
+    charging_session_timeout_seconds: int = Field(
+        default=1800,
+        alias="CHARGING_SESSION_TIMEOUT_SECONDS",
+    )
     outbound_call_timeout_seconds: float = Field(
         default=15,
         alias="OUTBOUND_CALL_TIMEOUT_SECONDS",
@@ -54,7 +58,7 @@ class Settings(BaseSettings):
         alias="STALE_STATUS_REMAP_WINDOW_SECONDS",
     )
     evpoint_live_tx_grace_seconds: int = Field(
-        default=15,
+        default=60,
         alias="EVPOINT_LIVE_TX_GRACE_SECONDS",
     )
 
