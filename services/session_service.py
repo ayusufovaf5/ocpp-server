@@ -193,6 +193,83 @@ class SessionService:
             await self._db.rollback()
             raise
 
+    async def finalize_after_remote_stop(
+        self,
+        *,
+        charge_point_id: str,
+        connector_id: int,
+        ocpp_transaction_id: int,
+        session: ChargingSession | None = None,
+    ) -> None:
+        try:
+            charger = await self._chargers.get_by_charge_point_id(charge_point_id)
+            if charger is None:
+                return
+
+            row = session
+            if row is None:
+                row = await self._sessions.get_by_ocpp_transaction_id(ocpp_transaction_id)
+            if row is not None and row.status == "Active":
+                latest = await self._sessions.latest_meter_value(row.id)
+                meter_stop = (
+                    int(round(latest.value))
+                    if latest is not None
+                    else int(row.meter_start)
+                )
+                await self._sessions.stop(
+                    row,
+                    stopped_at=utc_now(),
+                    meter_stop=meter_stop,
+                    end_reason=END_REASON_REMOTE_STOP,
+                    meter_stop_estimated=latest is None,
+                )
+
+            await self._chargers.set_status(charge_point_id, "Available", now=utc_now())
+            await self._connector_statuses.upsert(
+                charger_id=charger.id,
+                connector_id=connector_id,
+                status="Available",
+                updated_at=utc_now(),
+            )
+            await self._db.commit()
+
+            await get_connection_state().set_stopped_ocpp_transaction_for_live(
+                charge_point_id,
+                connector_id,
+                ocpp_transaction_id,
+            )
+            await get_connection_state().clear_active_session(charge_point_id, connector_id)
+            await get_connection_state().take_pending_remote_start(
+                charge_point_id, connector_id
+            )
+            await get_connection_state().set_connector_status(
+                charge_point_id, connector_id, "Available"
+            )
+            await get_publisher().publish(
+                EventType.CHARGER_STATUS_CHANGED,
+                {
+                    "charge_point_id": charge_point_id,
+                    "connector_id": connector_id,
+                    "status": "Available",
+                    "ocpp_transaction_id": ocpp_transaction_id,
+                },
+            )
+            if row is not None:
+                await get_publisher().publish(
+                    EventType.SESSION_STOPPED,
+                    {
+                        "charge_point_id": charge_point_id,
+                        "connector_id": connector_id,
+                        "session_id": row.id,
+                        "ocpp_transaction_id": ocpp_transaction_id,
+                        "meter_stop": row.meter_stop,
+                        "end_reason": END_REASON_REMOTE_STOP,
+                    },
+                )
+        except Exception:
+            await self._db.rollback()
+            raise
+
     async def close_offline_timed_out_sessions(self, grace_period_seconds: int) -> int:
         try:
             cutoff = seconds_ago(grace_period_seconds)
@@ -293,6 +370,13 @@ class SessionService:
                     meter_value=meter_value,
                 )
                 return []
+
+            if (
+                transaction_id is not None
+                and charging.ocpp_transaction_id is not None
+                and int(transaction_id) == int(charging.ocpp_transaction_id)
+            ):
+                ChargingSessionTimeoutWatcher(self._db).extend(charging)
 
             created = await self._persist_meter_entries(charging.id, meter_value)
             await self._chargers.set_status(charge_point_id, "Charging", now=utc_now())

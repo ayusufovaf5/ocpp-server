@@ -6,12 +6,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ocpp16 import protocol
 from repositories.charger_repository import ChargerRepository
+from repositories.connector_status_repository import ConnectorStatusRepository
 from repositories.session_repository import SessionRepository
 from services.errors import (
     AmbiguousActiveSessionError,
     ChargerOfflineError,
     NoActiveSessionError,
 )
+from services.session_service import SessionService
 from state.connection_registry import get_connection_registry
 from state.connection_state import get_connection_state
 
@@ -215,6 +217,12 @@ class RemoteControlService:
         connector_id: int | None = None,
         timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
+        """RemoteStop + immediate finalize (old EvPointOCPP contract).
+
+        EvPoint sends charging.Id as transaction_id. The station may use a different
+        OCPP transactionId — we map to the station id for the call, but keep the
+        EvPoint id in live status for the poller grace window.
+        """
         charger = await self._chargers.get_by_charge_point_id(charge_point_id)
         if charger is None or charger.disconnected_at is not None:
             raise ChargerOfflineError(charge_point_id)
@@ -230,32 +238,112 @@ class RemoteControlService:
 
         if active is None and connector_id is not None:
             active = await sessions.get_active_by_charger_connector(charger.id, connector_id)
-            if active is None:
+        elif active is None:
+            active_list = await sessions.list_active_by_charger(charger.id)
+            if len(active_list) > 1:
+                raise AmbiguousActiveSessionError(charge_point_id, len(active_list))
+            if len(active_list) == 1:
+                active = active_list[0]
+
+        # Preparing after RemoteStart: EvPoint charging id lives in pending before StartTransaction.
+        pending_connector_id: int | None = None
+        if active is None:
+            pending_connector_id = await self._find_pending_connector(
+                charge_point_id,
+                charger.id,
+                transaction_id=transaction_id,
+                connector_id=connector_id,
+            )
+
+        if active is None and pending_connector_id is None:
+            # Last resort: station may still accept RemoteStop for the last known tx.
+            if connector_id is not None:
                 active = await sessions.latest_with_ocpp_transaction_id(
                     charger.id, connector_id=connector_id
                 )
-                if active is None or active.ocpp_transaction_id is None:
-                    raise NoActiveSessionError(charge_point_id, connector_id=connector_id)
-        elif active is None:
-            active_list = await sessions.list_active_by_charger(charger.id)
-            if not active_list:
-                active = await sessions.latest_with_ocpp_transaction_id(charger.id)
-                if active is None or active.ocpp_transaction_id is None:
-                    raise NoActiveSessionError(charge_point_id)
-            elif len(active_list) > 1:
-                raise AmbiguousActiveSessionError(charge_point_id, len(active_list))
             else:
-                active = active_list[0]
+                active = await sessions.latest_with_ocpp_transaction_id(charger.id)
+            if active is not None and active.ocpp_transaction_id is None:
+                active = None
+            if active is None:
+                raise NoActiveSessionError(charge_point_id, connector_id=connector_id)
 
-        if active.ocpp_transaction_id is None:
-            raise NoActiveSessionError(charge_point_id, connector_id=active.connector_id)
-
-        return await self.call(
-            charge_point_id,
-            "RemoteStopTransaction",
-            {"transactionId": active.ocpp_transaction_id},
-            timeout_seconds=timeout_seconds,
+        resolved_connector_id = (
+            active.connector_id if active is not None else pending_connector_id
         )
+        assert resolved_connector_id is not None
+
+        # Station must receive its own OCPP transactionId when a session exists.
+        station_tx_id: int | None = None
+        if active is not None and active.ocpp_transaction_id is not None:
+            station_tx_id = int(active.ocpp_transaction_id)
+        elif transaction_id > 0:
+            station_tx_id = int(transaction_id)
+
+        # Live/grace id must stay the EvPoint charging id when the app provided it.
+        live_tx_id = (
+            int(transaction_id)
+            if transaction_id > 0
+            else int(station_tx_id or 0)
+        )
+        if live_tx_id <= 0 and active is not None and active.ocpp_transaction_id is not None:
+            live_tx_id = int(active.ocpp_transaction_id)
+        if live_tx_id <= 0:
+            raise NoActiveSessionError(charge_point_id, connector_id=resolved_connector_id)
+
+        response: dict[str, Any]
+        try:
+            if station_tx_id is not None:
+                response = await self.call(
+                    charge_point_id,
+                    "RemoteStopTransaction",
+                    {"transactionId": station_tx_id},
+                    timeout_seconds=timeout_seconds,
+                )
+            else:
+                response = {"status": "Accepted"}
+        except Exception as exc:
+            # Old OCPP still finalized after timeout/error so EvPoint can complete.
+            response = {"status": "Error", "message": str(exc)}
+
+        await SessionService(self._db).finalize_after_remote_stop(
+            charge_point_id=charge_point_id,
+            connector_id=resolved_connector_id,
+            ocpp_transaction_id=live_tx_id,
+            session=active,
+        )
+        return response
+
+    async def _find_pending_connector(
+        self,
+        charge_point_id: str,
+        charger_id: int,
+        *,
+        transaction_id: int,
+        connector_id: int | None,
+    ) -> int | None:
+        state = get_connection_state()
+        if connector_id is not None:
+            pending = await state.peek_pending_remote_start(charge_point_id, connector_id)
+            if pending is None:
+                return None
+            if transaction_id > 0 and pending.transaction_id != transaction_id:
+                return None
+            return connector_id
+
+        if transaction_id <= 0:
+            return None
+
+        rows = await ConnectorStatusRepository(self._db).list_by_charger(charger_id)
+        for row in rows:
+            if row.connector_id == 0:
+                continue
+            pending = await state.peek_pending_remote_start(
+                charge_point_id, row.connector_id
+            )
+            if pending is not None and pending.transaction_id == transaction_id:
+                return int(row.connector_id)
+        return None
 
 
 _MESSAGE_TRIGGER_WIRE = {

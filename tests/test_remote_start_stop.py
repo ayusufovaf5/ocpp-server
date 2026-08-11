@@ -14,6 +14,7 @@ from ocpp16.protocol import MessageType
 from services.charger_service import ChargerService
 from services.session_service import SessionService
 from state.connection_registry import ConnectionRegistry, set_connection_registry
+from state.connection_state import get_connection_state
 
 
 async def _wait_port(host: str, port: int, timeout: float = 5.0) -> None:
@@ -98,7 +99,6 @@ async def test_remote_start_happy_path_via_rest_and_ws(ocpp_http_server, db_sess
         reply_task = asyncio.create_task(station_loop())
         async with AsyncClient(
             base_url=ocpp_http_server["http"],
-            headers={"X-API-Key": DEV_API_KEY},
         ) as client:
             response = await client.post(
                 f"/start/{charge_point_id}",
@@ -254,7 +254,6 @@ async def test_remote_stop_uses_ocpp_transaction_id_from_db(ocpp_http_server, db
         reply_task = asyncio.create_task(station_loop())
         async with AsyncClient(
             base_url=ocpp_http_server["http"],
-            headers={"X-API-Key": DEV_API_KEY},
         ) as client:
             response = await client.post(
                 f"/stop/{charge_point_id}",
@@ -322,7 +321,6 @@ async def test_remote_stop_falls_back_to_latest_completed_session(
         reply_task = asyncio.create_task(station_loop())
         async with AsyncClient(
             base_url=ocpp_http_server["http"],
-            headers={"X-API-Key": DEV_API_KEY},
         ) as client:
             response = await client.post(
                 f"/stop/{charge_point_id}",
@@ -477,14 +475,167 @@ async def test_remote_start_stop_full_station_cycle_station_stop_reason(
 
     from repositories.charger_repository import ChargerRepository
     from repositories.session_repository import SessionRepository
-    from services.session_service import END_REASON_STATION_STOP
+    from services.session_service import END_REASON_REMOTE_STOP
 
+    await db_session.commit()
+    db_session.expire_all()
     charger = await ChargerRepository(db_session).get_by_charge_point_id(charge_point_id)
     assert charger is not None
     latest = await SessionRepository(db_session).latest_with_ocpp_transaction_id(charger.id)
     assert latest is not None
     assert latest.status == "Completed"
-    assert latest.effective_end_reason == END_REASON_STATION_STOP
+    assert latest.effective_end_reason == END_REASON_REMOTE_STOP
+
+
+@pytest.mark.asyncio
+async def test_remote_stop_finalizes_and_keeps_tx_for_live(
+    ocpp_http_server, db_session
+) -> None:
+    """Old EvPointOCPP contract: after RemoteStop, Available + transaction_id grace."""
+    charge_point_id = "CP_RSTOP_FINALIZE"
+    await ChargerService(db_session).register_boot(
+        charge_point_id=charge_point_id, vendor="V", model="M"
+    )
+    app_charging_id = 1780646101
+    await get_connection_state().set_pending_remote_start(
+        charge_point_id,
+        1,
+        id_tag="TAG",
+        transaction_id=app_charging_id,
+    )
+    session = await SessionService(db_session).start_transaction(
+        charge_point_id=charge_point_id,
+        connector_id=1,
+        id_tag="TAG",
+        meter_start=0,
+        timestamp=utc_now_iso(),
+    )
+    assert session.ocpp_transaction_id == app_charging_id
+
+    async with websockets.connect(
+        f"{ocpp_http_server['ws']}/ocpp/{charge_point_id}",
+        subprotocols=["ocpp1.6"],
+    ) as ws:
+        await _boot(ws, charge_point_id)
+
+        async def station_loop() -> None:
+            try:
+                while True:
+                    frame = json.loads(await ws.recv())
+                    if frame[0] == MessageType.CALL and frame[2] == "RemoteStopTransaction":
+                        assert frame[3] == {"transactionId": app_charging_id}
+                        await ws.send(
+                            json.dumps(
+                                [MessageType.CALLRESULT, frame[1], {"status": "Accepted"}]
+                            )
+                        )
+                        return
+            except websockets.ConnectionClosed:
+                return
+
+        reply_task = asyncio.create_task(station_loop())
+        async with AsyncClient(
+            base_url=ocpp_http_server["http"],
+        ) as client:
+            response = await client.post(
+                f"/stop/{charge_point_id}",
+                json={"transaction_id": app_charging_id},
+            )
+        assert response.status_code == 200
+        if not reply_task.done():
+            reply_task.cancel()
+            try:
+                await reply_task
+            except asyncio.CancelledError:
+                pass
+        else:
+            await reply_task
+
+    from repositories.session_repository import SessionRepository
+
+    await db_session.commit()
+    db_session.expire_all()
+    row = await SessionRepository(db_session).get_by_ocpp_transaction_id(app_charging_id)
+    assert row is not None
+    assert row.status == "Completed"
+
+    stopped = await get_connection_state().peek_stopped_ocpp_transaction_for_live(
+        charge_point_id, 1
+    )
+    assert stopped == app_charging_id
+
+
+@pytest.mark.asyncio
+async def test_remote_stop_pending_preparing_without_session(
+    ocpp_http_server, db_session
+) -> None:
+    charge_point_id = "CP_RSTOP_PENDING"
+    await ChargerService(db_session).register_boot(
+        charge_point_id=charge_point_id, vendor="V", model="M"
+    )
+    from repositories.charger_repository import ChargerRepository
+    from repositories.connector_status_repository import ConnectorStatusRepository
+    from db.time import utc_now
+
+    charger = await ChargerRepository(db_session).get_by_charge_point_id(charge_point_id)
+    assert charger is not None
+    await ConnectorStatusRepository(db_session).upsert(
+        charger_id=charger.id,
+        connector_id=1,
+        status="Preparing",
+        updated_at=utc_now(),
+    )
+    await db_session.commit()
+
+    app_charging_id = 424242
+    await get_connection_state().set_pending_remote_start(
+        charge_point_id,
+        1,
+        id_tag="TAG",
+        transaction_id=app_charging_id,
+    )
+
+    async with websockets.connect(
+        f"{ocpp_http_server['ws']}/ocpp/{charge_point_id}",
+        subprotocols=["ocpp1.6"],
+    ) as ws:
+        await _boot(ws, charge_point_id)
+
+        async def station_loop() -> None:
+            try:
+                while True:
+                    frame = json.loads(await ws.recv())
+                    if frame[0] == MessageType.CALL and frame[2] == "RemoteStopTransaction":
+                        await ws.send(
+                            json.dumps(
+                                [MessageType.CALLRESULT, frame[1], {"status": "Accepted"}]
+                            )
+                        )
+                        return
+            except websockets.ConnectionClosed:
+                return
+
+        reply_task = asyncio.create_task(station_loop())
+        async with AsyncClient(
+            base_url=ocpp_http_server["http"],
+        ) as client:
+            response = await client.post(
+                f"/stop/{charge_point_id}",
+                json={"transaction_id": app_charging_id},
+            )
+        assert response.status_code == 200
+        reply_task.cancel()
+        try:
+            await reply_task
+        except asyncio.CancelledError:
+            pass
+
+    pending = await get_connection_state().peek_pending_remote_start(charge_point_id, 1)
+    assert pending is None
+    stopped = await get_connection_state().peek_stopped_ocpp_transaction_for_live(
+        charge_point_id, 1
+    )
+    assert stopped == app_charging_id
 
 
 @pytest.mark.asyncio
@@ -532,7 +683,6 @@ async def test_remote_stop_with_connector_id_scopes_session(ocpp_http_server, db
         task = asyncio.create_task(station_loop())
         async with AsyncClient(
             base_url=ocpp_http_server["http"],
-            headers={"X-API-Key": DEV_API_KEY},
         ) as client:
             response = await client.post(
                 f"/stop/{charge_point_id}",

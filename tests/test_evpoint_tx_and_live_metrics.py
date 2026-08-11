@@ -226,3 +226,55 @@ def test_should_skip_preparing_status_push_only_without_tx() -> None:
     assert should_skip_preparing_status_push("Preparing", None) is True
     assert should_skip_preparing_status_push("Preparing", 42) is False
     assert should_skip_preparing_status_push("Charging", None) is False
+
+
+@pytest.mark.asyncio
+async def test_live_payload_includes_pending_transaction_id_while_preparing(
+    db_session,
+) -> None:
+    await ChargerService(db_session).register_boot(
+        charge_point_id="CP_LIVE_PREP", vendor="V", model="M"
+    )
+    await ChargerService(db_session).update_status(
+        "CP_LIVE_PREP", "Preparing", connector_id=1
+    )
+    await get_connection_state().set_pending_remote_start(
+        "CP_LIVE_PREP",
+        1,
+        id_tag="TAG",
+        transaction_id=777001,
+    )
+
+    payload = await LiveStatusService(db_session).build_timed_live_payload()
+    match = next(
+        c
+        for charger in payload["chargers"]
+        if charger["charger_id"] == "CP_LIVE_PREP"
+        for c in charger["connectors"]
+        if c["number"] == 1
+    )
+    assert match["status"] == "Preparing"
+    assert match["transaction_id"] == 777001
+
+
+@pytest.mark.asyncio
+async def test_live_payload_remaps_stale_charging_without_transaction_id(
+    db_session,
+) -> None:
+    await ChargerService(db_session).register_boot(
+        charge_point_id="CP_STALE_CH", vendor="V", model="M"
+    )
+    await ChargerService(db_session).update_status(
+        "CP_STALE_CH", "Charging", connector_id=1
+    )
+
+    payload = await LiveStatusService(db_session).build_timed_live_payload()
+    match = next(
+        c
+        for charger in payload["chargers"]
+        if charger["charger_id"] == "CP_STALE_CH"
+        for c in charger["connectors"]
+        if c["number"] == 1
+    )
+    assert match["status"] == "Available"
+    assert match["transaction_id"] is None

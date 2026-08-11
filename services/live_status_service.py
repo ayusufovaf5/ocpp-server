@@ -20,6 +20,16 @@ from services.status import (
 )
 
 
+_IN_PROGRESS_STATUSES = {
+    "Preparing",
+    "Charging",
+    "SuspendedEv",
+    "SuspendedEV",
+    "SuspendedEVSE",
+    "Finishing",
+}
+
+
 def _duration_seconds(started_at: datetime | None, *, now: datetime) -> float:
     if started_at is None:
         return 0
@@ -42,19 +52,19 @@ def _connector_payload(
     battery: float | None,
     charging_speed_kw: float | None,
     now: datetime,
-    stopped_ocpp_transaction_id: int | None = None,
+    transaction_id: int | None,
 ) -> dict[str, Any]:
+    normalized = normalize_status(status)
     if session is not None:
-        status = "Charging"
-    transaction_id = (
-        session.ocpp_transaction_id
-        if session is not None
-        else stopped_ocpp_transaction_id
-    )
+        normalized = "Charging"
+    elif normalized in _IN_PROGRESS_STATUSES and transaction_id is None:
+        # Never advertise in-progress without a transaction id EvPoint can bind to.
+        normalized = "Available"
+
     return {
         "number": connector_id,
-        "status": normalize_status(status),
-        "charging_speed_kw": charging_speed_kw,
+        "status": normalized,
+        "charging_speed_kw": charging_speed_kw if session is not None else None,
         "total_energy_delivered_kwh": (
             None
             if session is None
@@ -64,7 +74,7 @@ def _connector_payload(
             0 if session is None else _duration_seconds(session.started_at, now=now)
         ),
         "transaction_id": transaction_id,
-        "battery": battery,
+        "battery": battery if session is not None else None,
     }
 
 
@@ -91,6 +101,39 @@ class LiveStatusService:
         )
         return latest_wh, battery, speed
 
+    async def _resolve_transaction_id(
+        self,
+        *,
+        charge_point_id: str,
+        connector_id: int,
+        status: str,
+        session: Any | None,
+        now: datetime,
+    ) -> int | None:
+        if session is not None and session.ocpp_transaction_id is not None:
+            return int(session.ocpp_transaction_id)
+
+        connection_state = get_connection_state()
+        normalized = normalize_status(status)
+
+        # RemoteStart stores EvPoint charging id before StartTransaction arrives.
+        if normalized in _IN_PROGRESS_STATUSES:
+            pending = await connection_state.peek_pending_remote_start(
+                charge_point_id, connector_id
+            )
+            if pending is not None and pending.transaction_id > 0:
+                return int(pending.transaction_id)
+
+        stopped = await connection_state.peek_stopped_ocpp_transaction_for_live(
+            charge_point_id,
+            connector_id,
+            now=now,
+        )
+        if stopped is not None:
+            return int(stopped)
+
+        return None
+
     async def build_timed_live_payload(self, *, now: datetime | None = None) -> dict[str, Any]:
         when = now or utc_now()
         chargers = await self._chargers.list_all()
@@ -99,7 +142,6 @@ class LiveStatusService:
         for session in active_sessions:
             active_by_charger.setdefault(session.charger_id, {})[session.connector_id] = session
 
-        connection_state = get_connection_state()
         chargers_out: list[dict[str, Any]] = []
         for charger in chargers:
             rows = await self._connectors.list_by_charger(charger.id)
@@ -108,13 +150,13 @@ class LiveStatusService:
                 if row.connector_id == 0:
                     continue
                 session = active_by_charger.get(charger.id, {}).get(row.connector_id)
-                stopped_tx = None
-                if session is None:
-                    stopped_tx = await connection_state.peek_stopped_ocpp_transaction_for_live(
-                        charger.charge_point_id,
-                        row.connector_id,
-                        now=when,
-                    )
+                transaction_id = await self._resolve_transaction_id(
+                    charge_point_id=charger.charge_point_id,
+                    connector_id=row.connector_id,
+                    status=row.status,
+                    session=session,
+                    now=when,
+                )
                 latest_wh = battery = speed = None
                 if session is not None:
                     latest_wh, battery, speed = await self._session_live_metrics(session)
@@ -126,13 +168,18 @@ class LiveStatusService:
                     battery=battery,
                     charging_speed_kw=speed,
                     now=when,
-                    stopped_ocpp_transaction_id=stopped_tx,
+                    transaction_id=transaction_id,
                 )
 
             for connector_id, session in active_by_charger.get(charger.id, {}).items():
                 if connector_id in by_connector:
                     continue
                 latest_wh, battery, speed = await self._session_live_metrics(session)
+                transaction_id = (
+                    int(session.ocpp_transaction_id)
+                    if session.ocpp_transaction_id is not None
+                    else None
+                )
                 by_connector[connector_id] = _connector_payload(
                     connector_id=connector_id,
                     status="Charging",
@@ -141,6 +188,7 @@ class LiveStatusService:
                     battery=battery,
                     charging_speed_kw=speed,
                     now=when,
+                    transaction_id=transaction_id,
                 )
 
             chargers_out.append(
