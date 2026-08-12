@@ -55,6 +55,16 @@ class RemoteStopRequest(BaseModel):
     connector_id: int | None = None
 
 
+class SetChargingProfileRequest(BaseModel):
+    connector_id: int
+    transaction_id: int
+    limit: float
+    charging_rate_unit: Literal["W", "A"] = "W"
+    number_phases: int | None = 3
+    stack_level: int = 0
+    charging_profile_id: int | None = None
+
+
 def _remote_http_result(coro_result: Any) -> dict[str, Any]:
     return {"status": "success", "response": coro_result}
 
@@ -245,5 +255,25 @@ async def remote_stop(
             charger_id,
             transaction_id=body.transaction_id,
             connector_id=body.connector_id,
+        )
+    )
+
+
+@router.post("/set-charging-profile/{charger_id}")
+async def set_charging_profile(
+    charger_id: str,
+    body: SetChargingProfileRequest,
+    db: AsyncSession = Depends(get_db_session),
+) -> dict[str, Any]:
+    return await _run_remote(
+        lambda: RemoteControlService(db).set_charging_profile(
+            charger_id,
+            connector_id=body.connector_id,
+            transaction_id=body.transaction_id,
+            limit=body.limit,
+            charging_rate_unit=body.charging_rate_unit,
+            number_phases=body.number_phases,
+            stack_level=body.stack_level,
+            charging_profile_id=body.charging_profile_id,
         )
     )

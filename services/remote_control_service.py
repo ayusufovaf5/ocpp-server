@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ocpp16 import protocol
@@ -16,6 +17,8 @@ from services.errors import (
 from services.session_service import SessionService
 from state.connection_registry import get_connection_registry
 from state.connection_state import get_connection_state
+
+logger = structlog.get_logger(__name__)
 
 
 class RemoteControlService:
@@ -209,6 +212,58 @@ class RemoteControlService:
             timeout_seconds=timeout_seconds,
         )
 
+    async def set_charging_profile(
+        self,
+        charge_point_id: str,
+        *,
+        connector_id: int,
+        transaction_id: int,
+        limit: float,
+        charging_rate_unit: Literal["W", "A"] = "W",
+        number_phases: int | None = 3,
+        stack_level: int = 0,
+        charging_profile_id: int | None = None,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, Any]:
+        profile_id = (
+            int(charging_profile_id)
+            if charging_profile_id is not None
+            else max(1, int(transaction_id))
+        )
+        payload = build_set_charging_profile_payload(
+            connector_id=connector_id,
+            transaction_id=transaction_id,
+            limit=limit,
+            charging_rate_unit=charging_rate_unit,
+            number_phases=number_phases,
+            stack_level=stack_level,
+            charging_profile_id=profile_id,
+        )
+        logger.info(
+            "ocpp.set_charging_profile.send",
+            charge_point_id=charge_point_id,
+            connector_id=connector_id,
+            transaction_id=transaction_id,
+            limit=limit,
+            charging_rate_unit=charging_rate_unit,
+            charging_profile_id=profile_id,
+        )
+        response = await self.call(
+            charge_point_id,
+            "SetChargingProfile",
+            payload,
+            timeout_seconds=timeout_seconds,
+        )
+        logger.info(
+            "ocpp.set_charging_profile.conf",
+            charge_point_id=charge_point_id,
+            connector_id=connector_id,
+            transaction_id=transaction_id,
+            status=response.get("status"),
+            response=response,
+        )
+        return response
+
     async def remote_stop(
         self,
         charge_point_id: str,
@@ -217,12 +272,6 @@ class RemoteControlService:
         connector_id: int | None = None,
         timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
-        """RemoteStop + immediate finalize (old EvPointOCPP contract).
-
-        EvPoint sends charging.Id as transaction_id. The station may use a different
-        OCPP transactionId — we map to the station id for the call, but keep the
-        EvPoint id in live status for the poller grace window.
-        """
         charger = await self._chargers.get_by_charge_point_id(charge_point_id)
         if charger is None or charger.disconnected_at is not None:
             raise ChargerOfflineError(charge_point_id)
@@ -245,7 +294,6 @@ class RemoteControlService:
             if len(active_list) == 1:
                 active = active_list[0]
 
-        # Preparing after RemoteStart: EvPoint charging id lives in pending before StartTransaction.
         pending_connector_id: int | None = None
         if active is None:
             pending_connector_id = await self._find_pending_connector(
@@ -256,7 +304,6 @@ class RemoteControlService:
             )
 
         if active is None and pending_connector_id is None:
-            # Last resort: station may still accept RemoteStop for the last known tx.
             if connector_id is not None:
                 active = await sessions.latest_with_ocpp_transaction_id(
                     charger.id, connector_id=connector_id
@@ -273,14 +320,12 @@ class RemoteControlService:
         )
         assert resolved_connector_id is not None
 
-        # Station must receive its own OCPP transactionId when a session exists.
         station_tx_id: int | None = None
         if active is not None and active.ocpp_transaction_id is not None:
             station_tx_id = int(active.ocpp_transaction_id)
         elif transaction_id > 0:
             station_tx_id = int(transaction_id)
 
-        # Live/grace id must stay the EvPoint charging id when the app provided it.
         live_tx_id = (
             int(transaction_id)
             if transaction_id > 0
@@ -303,7 +348,6 @@ class RemoteControlService:
             else:
                 response = {"status": "Accepted"}
         except Exception as exc:
-            # Old OCPP still finalized after timeout/error so EvPoint can complete.
             response = {"status": "Error", "message": str(exc)}
 
         await SessionService(self._db).finalize_after_remote_stop(
@@ -344,6 +388,50 @@ class RemoteControlService:
             if pending is not None and pending.transaction_id == transaction_id:
                 return int(row.connector_id)
         return None
+
+
+def build_set_charging_profile_payload(
+    *,
+    connector_id: int,
+    transaction_id: int,
+    limit: float,
+    charging_rate_unit: Literal["W", "A"] = "W",
+    number_phases: int | None = 3,
+    stack_level: int = 0,
+    charging_profile_id: int = 1,
+    charging_profile_kind: Literal["Absolute", "Relative"] = "Relative",
+    start_schedule: str | None = None,
+) -> dict[str, Any]:
+    from datetime import UTC, datetime
+
+    period: dict[str, Any] = {
+        "startPeriod": 0,
+        "limit": float(limit),
+    }
+    if number_phases is not None:
+        period["numberPhases"] = int(number_phases)
+
+    schedule: dict[str, Any] = {
+        "chargingRateUnit": charging_rate_unit,
+        "chargingSchedulePeriod": [period],
+    }
+    # Absolute schedules need an anchor time; many CPs ignore Absolute without it.
+    if charging_profile_kind == "Absolute":
+        schedule["startSchedule"] = start_schedule or datetime.now(UTC).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+
+    return {
+        "connectorId": int(connector_id),
+        "csChargingProfiles": {
+            "chargingProfileId": int(charging_profile_id),
+            "transactionId": int(transaction_id),
+            "stackLevel": int(stack_level),
+            "chargingProfilePurpose": "TxProfile",
+            "chargingProfileKind": charging_profile_kind,
+            "chargingSchedule": schedule,
+        },
+    }
 
 
 _MESSAGE_TRIGGER_WIRE = {

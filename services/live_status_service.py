@@ -56,9 +56,9 @@ def _connector_payload(
 ) -> dict[str, Any]:
     normalized = normalize_status(status)
     if session is not None:
-        normalized = "Charging"
+        if normalized not in _IN_PROGRESS_STATUSES:
+            normalized = "Charging"
     elif normalized in _IN_PROGRESS_STATUSES and transaction_id is None:
-        # Never advertise in-progress without a transaction id EvPoint can bind to.
         normalized = "Available"
 
     return {
@@ -116,7 +116,6 @@ class LiveStatusService:
         connection_state = get_connection_state()
         normalized = normalize_status(status)
 
-        # RemoteStart stores EvPoint charging id before StartTransaction arrives.
         if normalized in _IN_PROGRESS_STATUSES:
             pending = await connection_state.peek_pending_remote_start(
                 charge_point_id, connector_id

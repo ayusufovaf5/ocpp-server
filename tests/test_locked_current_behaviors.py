@@ -68,13 +68,49 @@ async def ocpp_server(db_engine, unused_tcp_port):
 
 
 @pytest.mark.asyncio
-async def test_status_notification_finishing_maps_to_available(db_session) -> None:
+async def test_status_notification_finishing_maps_to_available_with_tx(
+    db_session, monkeypatch
+) -> None:
+    published: list[tuple] = []
+
+    async def capture_publish(_self, event_type, payload):
+        published.append((event_type, payload))
+        return "1-0"
+
+    monkeypatch.setattr(
+        "services.charger_service.get_publisher",
+        lambda: type("P", (), {"publish": capture_publish})(),
+    )
+
     chargers = ChargerService(db_session)
+    sessions = SessionService(db_session)
     await chargers.register_boot(charge_point_id="CP_FIN", vendor="V", model="M")
-    await chargers.update_status("CP_FIN", "Finishing")
+    session = await sessions.start_transaction(
+        charge_point_id="CP_FIN",
+        connector_id=1,
+        id_tag="TAG",
+        meter_start=0,
+        timestamp=utc_now_iso(),
+    )
+    assert session.ocpp_transaction_id is not None
+    await sessions.stop_transaction(
+        charge_point_id="CP_FIN",
+        transaction_id=session.ocpp_transaction_id,
+        meter_stop=10,
+        timestamp=utc_now_iso(),
+        connector_id=1,
+    )
+    published.clear()
+
+    await chargers.update_status("CP_FIN", "Finishing", connector_id=1)
     row = await chargers.get("CP_FIN")
     assert row is not None
     assert row.status == "Available"
+
+    assert len(published) == 1
+    _, payload = published[0]
+    assert payload["status"] == "Available"
+    assert payload["ocpp_transaction_id"] == session.ocpp_transaction_id
 
 
 @pytest.mark.asyncio

@@ -7,8 +7,13 @@ class ConnectionRegistry:
     def __init__(self) -> None:
         self._connections: dict[str, WebSocket] = {}
 
-    def register(self, charge_point_id: str, websocket: WebSocket) -> None:
+    def register(self, charge_point_id: str, websocket: WebSocket) -> WebSocket | None:
+        """Register connection. Returns previous websocket if replaced."""
+        previous = self._connections.get(charge_point_id)
         self._connections[charge_point_id] = websocket
+        if previous is websocket:
+            return None
+        return previous
 
     def unregister(self, charge_point_id: str, websocket: WebSocket | None = None) -> None:
         current = self._connections.get(charge_point_id)

@@ -81,10 +81,36 @@ def create_ocpp_app() -> FastAPI:
             subprotocol = "ocpp1.6"
         await websocket.accept(subprotocol=subprotocol)
         registry = get_connection_registry()
-        registry.register(charge_point_id, websocket)
+        previous = registry.register(charge_point_id, websocket)
+        if previous is not None:
+            protocol.fail_pending_for_charge_point(
+                charge_point_id,
+                ChargerOfflineError(charge_point_id),
+            )
+            try:
+                await previous.close()
+            except Exception:
+                logger.warning(
+                    "ocpp16.previous_ws_close_failed",
+                    charge_point_id=charge_point_id,
+                )
         async with db_module.async_session_factory() as db:
             await ChargerService(db).ensure_connected(charge_point_id)
         logger.info("ocpp16.connected", charge_point_id=charge_point_id)
+        inbound_tasks: set[asyncio.Task[None]] = set()
+
+        async def _handle_inbound_call(raw: str) -> None:
+            try:
+                async with db_module.async_session_factory() as db:
+                    handler = Ocpp16Handler(charge_point_id, db)
+                    response = await handler.handle_raw(raw)
+                await websocket.send_text(response)
+            except Exception:
+                logger.exception(
+                    "ocpp16.inbound_call_failed",
+                    charge_point_id=charge_point_id,
+                )
+
         try:
             while True:
                 raw = await websocket.receive_text()
@@ -103,11 +129,14 @@ def create_ocpp_app() -> FastAPI:
                     protocol.resolve_outbound_response(unique_id, message_type, payload)
                     continue
 
-                async with db_module.async_session_factory() as db:
-                    handler = Ocpp16Handler(charge_point_id, db)
-                    response = await handler.handle_raw(raw)
-                await websocket.send_text(response)
+                # Handle inbound CALLs in the background so outbound CallResults
+                # (e.g. SetChargingProfile) can be received while MeterValues runs.
+                task = asyncio.create_task(_handle_inbound_call(raw))
+                inbound_tasks.add(task)
+                task.add_done_callback(inbound_tasks.discard)
         except WebSocketDisconnect:
+            for task in list(inbound_tasks):
+                task.cancel()
             protocol.fail_pending_for_charge_point(
                 charge_point_id,
                 ChargerOfflineError(charge_point_id),
@@ -117,6 +146,8 @@ def create_ocpp_app() -> FastAPI:
                 await ChargerService(db).mark_disconnected(charge_point_id)
             logger.info("ocpp16.disconnected", charge_point_id=charge_point_id)
         except Exception:
+            for task in list(inbound_tasks):
+                task.cancel()
             logger.exception("ocpp16.connection_error", charge_point_id=charge_point_id)
             protocol.fail_pending_for_charge_point(
                 charge_point_id,

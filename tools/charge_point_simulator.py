@@ -35,6 +35,29 @@ class Simulator:
         self._pending: dict[str, asyncio.Future] = {}
         self._energy_wh: dict[int, float] = {}
         self._soc: dict[int, float] = {}
+        self._power_w: dict[int, float] = {}
+        self._default_power_w = 7200.0
+
+    def _power_for(self, connector_id: int) -> float:
+        return float(self._power_w.get(connector_id, self._default_power_w))
+
+    def _apply_charging_profile(self, connector_id: int, profiles: dict) -> float | None:
+        schedule = profiles.get("chargingSchedule") or {}
+        periods = schedule.get("chargingSchedulePeriod") or []
+        if not periods:
+            return None
+        limit = periods[0].get("limit")
+        if limit is None:
+            return None
+        limit_f = float(limit)
+        unit = str(schedule.get("chargingRateUnit") or "W").upper()
+        if unit == "A":
+            phases = int(periods[0].get("numberPhases") or 3)
+            power_w = limit_f * 230.0 * phases
+        else:
+            power_w = limit_f
+        self._power_w[connector_id] = max(0.0, power_w)
+        return self._power_w[connector_id]
 
     async def send_call(self, action: str, payload: dict) -> dict:
         msg_id = _uid()
@@ -92,43 +115,47 @@ class Simulator:
         self.active_tx.pop(connector_id, None)
         self._energy_wh.pop(connector_id, None)
         self._soc.pop(connector_id, None)
+        self._power_w.pop(connector_id, None)
         logger.info("StopTransaction OK tx=%s", transaction_id)
 
     async def send_meter_values(self, connector_id: int, transaction_id: int) -> None:
         energy = self._energy_wh.get(connector_id, 0.0)
         soc = self._soc.get(connector_id, 20.0)
-        await self.send_call(
-            "MeterValues",
-            {
-                "connectorId": connector_id,
-                "transactionId": transaction_id,
-                "meterValue": [
-                    {
-                        "timestamp": _now(),
-                        "sampledValue": [
-                            {
-                                "value": f"{energy:.0f}",
-                                "measurand": "Energy.Active.Import.Register",
-                                "unit": "Wh",
-                            },
-                            {
-                                "value": "7200",
-                                "measurand": "Power.Active.Import",
-                                "unit": "W",
-                            },
-                            {
-                                "value": f"{soc:.0f}",
-                                "measurand": "SoC",
-                                "unit": "Percent",
-                            },
-                        ],
-                    }
-                ],
-            },
-        )
+        power_w = self._power_for(connector_id)
+        # Fire-and-forget so inbound CSMS calls stay responsive during metering.
+        msg_id = _uid()
+        payload = {
+            "connectorId": connector_id,
+            "transactionId": transaction_id,
+            "meterValue": [
+                {
+                    "timestamp": _now(),
+                    "sampledValue": [
+                        {
+                            "value": f"{energy:.0f}",
+                            "measurand": "Energy.Active.Import.Register",
+                            "unit": "Wh",
+                        },
+                        {
+                            "value": f"{power_w:.0f}",
+                            "measurand": "Power.Active.Import",
+                            "unit": "W",
+                        },
+                        {
+                            "value": f"{soc:.0f}",
+                            "measurand": "SoC",
+                            "unit": "Percent",
+                        },
+                    ],
+                }
+            ],
+        }
+        await self.ws.send(json.dumps([CALL, msg_id, "MeterValues", payload]))
         logger.info(
-            "MeterValues sent tx=%s energy=%.0fWh (%.2fkWh) soc=%.0f",
+            "MeterValues sent tx=%s power=%.0fW (%.2fkW) energy=%.0fWh (%.2fkWh) soc=%.0f",
             transaction_id,
+            power_w,
+            power_w / 1000.0,
             energy,
             energy / 1000.0,
             soc,
@@ -143,15 +170,19 @@ class Simulator:
         self._stop_meter_loop(connector_id)
         self._energy_wh[connector_id] = 0.0
         self._soc[connector_id] = 20.0
+        self._power_w.setdefault(connector_id, self._default_power_w)
 
         async def loop() -> None:
             interval_s = 5.0
-            wh_per_tick = 7.2 * 1000.0 * (interval_s / 3600.0)
             try:
                 while connector_id in self.active_tx:
                     await self.send_meter_values(connector_id, transaction_id)
                     await asyncio.sleep(interval_s)
-                    self._energy_wh[connector_id] = self._energy_wh.get(connector_id, 0.0) + wh_per_tick
+                    power_kw = self._power_for(connector_id) / 1000.0
+                    wh_per_tick = power_kw * 1000.0 * (interval_s / 3600.0)
+                    self._energy_wh[connector_id] = (
+                        self._energy_wh.get(connector_id, 0.0) + wh_per_tick
+                    )
                     self._soc[connector_id] = min(
                         100.0, self._soc.get(connector_id, 20.0) + 0.15
                     )
@@ -235,6 +266,21 @@ class Simulator:
                     await self.status(cid, "Available")
 
             asyncio.create_task(follow_up())
+            return
+
+        if action == "SetChargingProfile":
+            await self.ws.send(json.dumps([CALLRESULT, msg_id, {"status": "Accepted"}]))
+            connector_id = int(payload.get("connectorId") or 1)
+            profiles = payload.get("csChargingProfiles") or {}
+            applied = None
+            if isinstance(profiles, dict):
+                applied = self._apply_charging_profile(connector_id, profiles)
+            logger.info(
+                "SetChargingProfile → Accepted connector=%s tx=%s applied_power_w=%s",
+                connector_id,
+                profiles.get("transactionId") if isinstance(profiles, dict) else None,
+                applied,
+            )
             return
 
         await self.ws.send(json.dumps([CALLRESULT, msg_id, {"status": "Accepted"}]))

@@ -258,6 +258,73 @@ async def test_live_payload_includes_pending_transaction_id_while_preparing(
 
 
 @pytest.mark.asyncio
+async def test_live_payload_finishing_maps_to_available_with_transaction_id(
+    db_session,
+) -> None:
+    await ChargerService(db_session).register_boot(
+        charge_point_id="CP_LIVE_FIN", vendor="V", model="M"
+    )
+    session = await SessionService(db_session).start_transaction(
+        charge_point_id="CP_LIVE_FIN",
+        connector_id=1,
+        id_tag="TAG",
+        meter_start=0,
+        timestamp=utc_now_iso(),
+    )
+    assert session.ocpp_transaction_id is not None
+    await SessionService(db_session).stop_transaction(
+        charge_point_id="CP_LIVE_FIN",
+        transaction_id=session.ocpp_transaction_id,
+        meter_stop=10,
+        timestamp=utc_now_iso(),
+        connector_id=1,
+    )
+    await ChargerService(db_session).update_status(
+        "CP_LIVE_FIN", "Finishing", connector_id=1
+    )
+
+    payload = await LiveStatusService(db_session).build_timed_live_payload()
+    match = next(
+        c
+        for charger in payload["chargers"]
+        if charger["charger_id"] == "CP_LIVE_FIN"
+        for c in charger["connectors"]
+        if c["number"] == 1
+    )
+    assert match["status"] == "Available"
+    assert match["transaction_id"] == session.ocpp_transaction_id
+
+
+@pytest.mark.asyncio
+async def test_live_payload_keeps_suspended_ev_with_transaction_id(db_session) -> None:
+    await ChargerService(db_session).register_boot(
+        charge_point_id="CP_LIVE_SEV", vendor="V", model="M"
+    )
+    session = await SessionService(db_session).start_transaction(
+        charge_point_id="CP_LIVE_SEV",
+        connector_id=1,
+        id_tag="TAG",
+        meter_start=0,
+        timestamp=utc_now_iso(),
+    )
+    assert session.ocpp_transaction_id is not None
+    await ChargerService(db_session).update_status(
+        "CP_LIVE_SEV", "SuspendedEV", connector_id=1
+    )
+
+    payload = await LiveStatusService(db_session).build_timed_live_payload()
+    match = next(
+        c
+        for charger in payload["chargers"]
+        if charger["charger_id"] == "CP_LIVE_SEV"
+        for c in charger["connectors"]
+        if c["number"] == 1
+    )
+    assert match["status"] == "SuspendedEv"
+    assert match["transaction_id"] == session.ocpp_transaction_id
+
+
+@pytest.mark.asyncio
 async def test_live_payload_remaps_stale_charging_without_transaction_id(
     db_session,
 ) -> None:

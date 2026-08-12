@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import ssl
+import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -35,6 +37,10 @@ def create_evpoint_ssl_context(
     return context
 
 
+class EvpointPushError(Exception):
+    pass
+
+
 def post_live_update_sync(
     url: str,
     payload: dict[str, Any],
@@ -43,14 +49,28 @@ def post_live_update_sync(
     timeout_seconds: float,
 ) -> int:
     body = json.dumps(payload).encode("utf-8")
-    request = urllib.request.Request(
-        url,
-        data=body,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(request, context=ssl_context, timeout=timeout_seconds) as response:
-        return int(response.status)
+    current_url = url
+    # Follow HTTPS redirects (EvPoint UseHttpsRedirection returns 307).
+    for _ in range(5):
+        request = urllib.request.Request(
+            current_url,
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(
+                request, context=ssl_context, timeout=timeout_seconds
+            ) as response:
+                return int(response.status)
+        except urllib.error.HTTPError as exc:
+            if exc.code not in (301, 302, 307, 308):
+                raise
+            location = exc.headers.get("Location")
+            if not location:
+                raise
+            current_url = urllib.parse.urljoin(current_url, location)
+    raise EvpointPushError(f"Too many redirects for {url}")
 
 
 async def post_live_update(
@@ -67,7 +87,3 @@ async def post_live_update(
         ssl_context=ssl_context,
         timeout_seconds=timeout_seconds,
     )
-
-
-class EvpointPushError(Exception):
-    pass
