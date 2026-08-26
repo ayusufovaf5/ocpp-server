@@ -137,11 +137,15 @@ def create_ocpp_app() -> FastAPI:
         except WebSocketDisconnect:
             for task in list(inbound_tasks):
                 task.cancel()
+            was_active = registry.get(charge_point_id) is websocket
+            registry.unregister(charge_point_id, websocket)
+            if not was_active:
+                logger.info("ocpp16.stale_disconnect_ignored", charge_point_id=charge_point_id)
+                return
             protocol.fail_pending_for_charge_point(
                 charge_point_id,
                 ChargerOfflineError(charge_point_id),
             )
-            registry.unregister(charge_point_id, websocket)
             async with db_module.async_session_factory() as db:
                 await ChargerService(db).mark_disconnected(charge_point_id)
             logger.info("ocpp16.disconnected", charge_point_id=charge_point_id)
@@ -149,11 +153,15 @@ def create_ocpp_app() -> FastAPI:
             for task in list(inbound_tasks):
                 task.cancel()
             logger.exception("ocpp16.connection_error", charge_point_id=charge_point_id)
+            was_active = registry.get(charge_point_id) is websocket
+            registry.unregister(charge_point_id, websocket)
+            if not was_active:
+                logger.info("ocpp16.stale_disconnect_ignored", charge_point_id=charge_point_id)
+                return
             protocol.fail_pending_for_charge_point(
                 charge_point_id,
                 ChargerOfflineError(charge_point_id),
             )
-            registry.unregister(charge_point_id, websocket)
             try:
                 async with db_module.async_session_factory() as db:
                     await ChargerService(db).mark_disconnected(charge_point_id)

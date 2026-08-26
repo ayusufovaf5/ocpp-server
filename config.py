@@ -78,6 +78,11 @@ class Settings(BaseSettings):
         alias="EVPOINT_PUSH_TIMEOUT_SECONDS",
     )
 
+    diagnostics_ftp_location: str = Field(
+        default="ftp://ftpuser:ftppass@127.0.0.1/upload/",
+        alias="DIAGNOSTICS_FTP_LOCATION",
+    )
+
     app_name: str = "opencpo-core"
     app_version: str = "0.2.0"
 

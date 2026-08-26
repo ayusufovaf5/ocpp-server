@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import get_db_session
+from config import get_settings
 from services.errors import (
     AmbiguousActiveSessionError,
     ChargerCallError,
@@ -37,7 +38,7 @@ class UpdateFirmwareRequest(BaseModel):
 
 
 class GetDiagnosticsRequest(BaseModel):
-    location: str
+    location: str | None = None
     retries: int | None = None
     retry_interval: int | None = None
     start_time: str | None = None
@@ -213,17 +214,27 @@ async def update_firmware(
 @router.post("/get-diagnostics/{charger_id}")
 async def get_diagnostics(
     charger_id: str,
-    body: GetDiagnosticsRequest,
+    body: GetDiagnosticsRequest | None = None,
     db: AsyncSession = Depends(get_db_session),
 ) -> dict[str, Any]:
+    req = body or GetDiagnosticsRequest()
+    location = (req.location or "").strip() or get_settings().diagnostics_ftp_location.strip()
+    if not location:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "status": "error",
+                "response": "DIAGNOSTICS_FTP_LOCATION is not configured",
+            },
+        )
     return await _run_remote(
         lambda: RemoteControlService(db).get_diagnostics(
             charger_id,
-            location=body.location,
-            retries=body.retries,
-            retry_interval=body.retry_interval,
-            start_time=body.start_time,
-            stop_time=body.stop_time,
+            location=location,
+            retries=req.retries,
+            retry_interval=req.retry_interval,
+            start_time=req.start_time,
+            stop_time=req.stop_time,
         )
     )
 

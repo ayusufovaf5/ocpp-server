@@ -99,3 +99,20 @@ async def test_reconnect_same_id_clears_zombie(ocpp_ws_server, db_session) -> No
         assert charger.disconnected_at is None
     finally:
         await second.close()
+
+
+@pytest.mark.asyncio
+async def test_overlapping_reconnect_keeps_online(ocpp_ws_server, db_session) -> None:
+    cp_id = "INT_CP_OVERLAP"
+    first = await SimulatedChargePoint.connect(ocpp_ws_server, cp_id)
+    assert (await first.boot(vendor="Re", model="One"))["status"] == "Accepted"
+
+    second = await SimulatedChargePoint.connect(ocpp_ws_server, cp_id)
+    try:
+        assert (await second.boot(vendor="Re", model="Two"))["status"] == "Accepted"
+        await asyncio.sleep(0.2)
+        charger = await _wait_connected(db_session, cp_id)
+        assert charger.disconnected_at is None
+        assert get_connection_registry().is_connected(cp_id) is True
+    finally:
+        await second.close()

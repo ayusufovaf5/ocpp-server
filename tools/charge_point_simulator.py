@@ -4,17 +4,29 @@ import argparse
 import asyncio
 import json
 import logging
+import time
+import urllib.error
+import urllib.request
 import uuid
 from datetime import UTC, datetime
+from ftplib import FTP, error_perm
+from io import BytesIO
+from pathlib import Path
+from typing import Any
+from urllib.parse import unquote, urlparse
 
 import websockets
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("cp-sim")
+ocpp_log = logging.getLogger("ocpp")
 
 CALL = 2
 CALLRESULT = 3
 CALLERROR = 4
+
+LOG_TIME_FORMAT = "%Y-%m-%dT%H:%M:%S"
+_LOCAL_DIAG_DIR = Path("C:/diag-upload")
 
 
 def _uid() -> str:
@@ -23,6 +35,123 @@ def _uid() -> str:
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def setup_simulator_log(charge_point_id: str) -> Path:
+    log_dir = Path("logs") / "simulator"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"{charge_point_id}.log"
+
+    formatter = logging.Formatter(
+        "%(asctime)s %(levelname)s %(name)s %(message)s",
+        datefmt=LOG_TIME_FORMAT,
+    )
+    formatter.converter = time.gmtime
+
+    ocpp_log.setLevel(logging.INFO)
+    ocpp_log.propagate = False
+    abs_path = str(log_path.resolve())
+    for existing in list(ocpp_log.handlers):
+        if (
+            isinstance(existing, logging.FileHandler)
+            and getattr(existing, "baseFilename", None) == abs_path
+        ):
+            return log_path
+
+    handler = logging.FileHandler(log_path, encoding="utf-8")
+    handler.setFormatter(formatter)
+    handler.setLevel(logging.INFO)
+    ocpp_log.addHandler(handler)
+
+    with open(log_path, "a", encoding="utf-8") as f:
+        f.write(
+            f"{datetime.now(UTC).strftime(LOG_TIME_FORMAT)} INFO simulator "
+            f"Diagnostics log started for charge point {charge_point_id}\n"
+        )
+    return log_path
+
+
+def _parse_iso_utc(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).replace(tzinfo=None)
+    except ValueError:
+        return None
+
+
+def read_diagnostics_log(
+    log_path: Path, start_time: Any = None, stop_time: Any = None
+) -> str:
+    if not log_path.exists():
+        return f"No diagnostics log found at {log_path}\n"
+
+    for handler in ocpp_log.handlers:
+        handler.flush()
+
+    all_lines = log_path.read_text(encoding="utf-8").splitlines(keepends=True)
+    if not all_lines:
+        return f"Diagnostics log is empty for {log_path}\n"
+
+    start_dt = _parse_iso_utc(start_time)
+    stop_dt = _parse_iso_utc(stop_time)
+    if not start_dt and not stop_dt:
+        return "".join(all_lines)
+
+    filtered: list[str] = []
+    for line in all_lines:
+        try:
+            line_dt = datetime.strptime(line[:19], LOG_TIME_FORMAT)
+        except ValueError:
+            continue
+        if start_dt and line_dt < start_dt:
+            continue
+        if stop_dt and line_dt > stop_dt:
+            continue
+        filtered.append(line)
+
+    if not filtered:
+        return (
+            f"No log entries in range "
+            f"startTime={start_time} stopTime={stop_time}\n"
+        )
+    return "".join(filtered)
+
+
+def _http_put_sync(url: str, body: bytes, content_type: str = "text/plain") -> int:
+    request = urllib.request.Request(
+        url,
+        data=body,
+        headers={"Content-Type": content_type, "Content-Length": str(len(body))},
+        method="PUT",
+    )
+    with urllib.request.urlopen(request, timeout=15) as response:
+        return int(response.status)
+
+
+def _ftp_upload_sync(location: str, file_name: str, body: bytes) -> str:
+    """Upload body to ftp://user:pass@host[:port]/path/ using STOR file_name."""
+    parsed = urlparse(location)
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or 21
+    user = unquote(parsed.username or "anonymous")
+    password = unquote(parsed.password or "anonymous@")
+    remote_dir = unquote(parsed.path or "/")
+
+    with FTP() as ftp:
+        ftp.connect(host, port, timeout=15)
+        ftp.login(user, password)
+        for part in [p for p in remote_dir.strip("/").split("/") if p]:
+            try:
+                ftp.cwd(part)
+            except error_perm:
+                ftp.mkd(part)
+                ftp.cwd(part)
+        ftp.storbinary(f"STOR {file_name}", BytesIO(body))
+        return f"ftp://{host}:{port}/{remote_dir.strip('/')}/{file_name}"
 
 
 class Simulator:
@@ -37,6 +166,45 @@ class Simulator:
         self._soc: dict[int, float] = {}
         self._power_w: dict[int, float] = {}
         self._default_power_w = 7200.0
+        self.diagnostics_log_path = setup_simulator_log(charge_point_id)
+
+    def _record(self, direction: str, frame: list | dict, *, note: str = "") -> None:
+        extra = f" {note}" if note else ""
+        if isinstance(frame, list) and frame:
+            if frame[0] == CALL and len(frame) >= 4:
+                ocpp_log.info(
+                    "%s CALL %s %s %s%s",
+                    direction,
+                    frame[1],
+                    frame[2],
+                    json.dumps(frame[3], ensure_ascii=False),
+                    extra,
+                )
+            elif frame[0] == CALLRESULT and len(frame) >= 3:
+                ocpp_log.info(
+                    "%s CALLRESULT %s %s%s",
+                    direction,
+                    frame[1],
+                    json.dumps(frame[2], ensure_ascii=False),
+                    extra,
+                )
+            elif frame[0] == CALLERROR and len(frame) >= 3:
+                ocpp_log.info(
+                    "%s CALLERROR %s %s%s",
+                    direction,
+                    frame[1],
+                    json.dumps(frame[2:], ensure_ascii=False),
+                    extra,
+                )
+            else:
+                ocpp_log.info("%s %s%s", direction, json.dumps(frame, ensure_ascii=False), extra)
+        else:
+            ocpp_log.info("%s %s%s", direction, json.dumps(frame, ensure_ascii=False), extra)
+
+    async def _reply(self, msg_id: str, payload: dict) -> None:
+        frame = [CALLRESULT, msg_id, payload]
+        self._record("out", frame)
+        await self.ws.send(json.dumps(frame))
 
     def _power_for(self, connector_id: int) -> float:
         return float(self._power_w.get(connector_id, self._default_power_w))
@@ -61,9 +229,11 @@ class Simulator:
 
     async def send_call(self, action: str, payload: dict) -> dict:
         msg_id = _uid()
+        frame = [CALL, msg_id, action, payload]
         fut: asyncio.Future = asyncio.get_running_loop().create_future()
         self._pending[msg_id] = fut
-        await self.ws.send(json.dumps([CALL, msg_id, action, payload]))
+        self._record("out", frame)
+        await self.ws.send(json.dumps(frame))
         return await asyncio.wait_for(fut, timeout=30)
 
     async def boot(self) -> None:
@@ -151,6 +321,7 @@ class Simulator:
             ],
         }
         await self.ws.send(json.dumps([CALL, msg_id, "MeterValues", payload]))
+        self._record("out", [CALL, msg_id, "MeterValues", payload])
         logger.info(
             "MeterValues sent tx=%s power=%.0fW (%.2fkW) energy=%.0fWh (%.2fkWh) soc=%.0f",
             transaction_id,
@@ -193,6 +364,7 @@ class Simulator:
 
     async def handle_inbound(self, frame: list) -> None:
         if frame[0] == CALLRESULT:
+            self._record("in", frame)
             msg_id, payload = frame[1], frame[2]
             fut = self._pending.pop(msg_id, None)
             if fut and not fut.done():
@@ -200,6 +372,7 @@ class Simulator:
             return
 
         if frame[0] == CALLERROR:
+            self._record("in", frame)
             msg_id = frame[1]
             fut = self._pending.pop(msg_id, None)
             if fut and not fut.done():
@@ -209,12 +382,13 @@ class Simulator:
         if frame[0] != CALL:
             return
 
+        self._record("in", frame)
         msg_id, action, payload = frame[1], frame[2], frame[3]
 
         if action == "RemoteStartTransaction":
             connector_id = int(payload.get("connectorId") or 1)
             id_tag = str(payload.get("idTag") or "admin")
-            await self.ws.send(json.dumps([CALLRESULT, msg_id, {"status": "Accepted"}]))
+            await self._reply(msg_id, {"status": "Accepted"})
 
             async def follow_up() -> None:
                 await self.status(connector_id, "Preparing")
@@ -233,7 +407,7 @@ class Simulator:
                 (cid for cid, tx in self.active_tx.items() if tx == transaction_id),
                 1,
             )
-            await self.ws.send(json.dumps([CALLRESULT, msg_id, {"status": "Accepted"}]))
+            await self._reply(msg_id, {"status": "Accepted"})
 
             async def follow_up() -> None:
                 await self.stop_transaction(transaction_id, connector_id)
@@ -249,7 +423,7 @@ class Simulator:
             connectors = (
                 sorted(self.known_connectors) or [1] if connector_id == 0 else [connector_id]
             )
-            await self.ws.send(json.dumps([CALLRESULT, msg_id, {"status": "Accepted"}]))
+            await self._reply(msg_id, {"status": "Accepted"})
 
             async def follow_up() -> None:
                 for cid in connectors:
@@ -259,7 +433,7 @@ class Simulator:
             return
 
         if action == "Reset":
-            await self.ws.send(json.dumps([CALLRESULT, msg_id, {"status": "Accepted"}]))
+            await self._reply(msg_id, {"status": "Accepted"})
 
             async def follow_up() -> None:
                 for cid in sorted(self.known_connectors) or [1]:
@@ -269,7 +443,7 @@ class Simulator:
             return
 
         if action == "SetChargingProfile":
-            await self.ws.send(json.dumps([CALLRESULT, msg_id, {"status": "Accepted"}]))
+            await self._reply(msg_id, {"status": "Accepted"})
             connector_id = int(payload.get("connectorId") or 1)
             profiles = payload.get("csChargingProfiles") or {}
             applied = None
@@ -283,8 +457,79 @@ class Simulator:
             )
             return
 
-        await self.ws.send(json.dumps([CALLRESULT, msg_id, {"status": "Accepted"}]))
+        if action == "GetDiagnostics":
+            location = str(payload.get("location") or "")
+            file_name = f"diagnostics_{self.id}_{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}.txt"
+            await self._reply(msg_id, {"fileName": file_name})
+            logger.info("GetDiagnostics → fileName=%s location=%s", file_name, location)
+            asyncio.create_task(self._upload_diagnostics(location, file_name, payload))
+            return
+
+        await self._reply(msg_id, {"status": "Accepted"})
         logger.info("Unhandled inbound %s → Accepted stub", action)
+
+    async def _upload_diagnostics(
+        self, location: str, file_name: str, req: dict
+    ) -> None:
+        try:
+            await self.send_call(
+                "DiagnosticsStatusNotification", {"status": "Uploading"}
+            )
+            text = read_diagnostics_log(
+                self.diagnostics_log_path,
+                start_time=req.get("startTime"),
+                stop_time=req.get("stopTime"),
+            )
+            content = text.encode("utf-8")
+
+            _LOCAL_DIAG_DIR.mkdir(parents=True, exist_ok=True)
+            local_path = _LOCAL_DIAG_DIR / file_name
+            local_path.write_bytes(content)
+            logger.info(
+                "Diagnostics content ready: %s bytes from %s",
+                len(content),
+                self.diagnostics_log_path,
+            )
+
+            scheme = (urlparse(location).scheme or "").lower()
+            if scheme in ("http", "https"):
+                target = location.rstrip("/") + "/" + file_name
+                status = await asyncio.to_thread(_http_put_sync, target, content)
+                logger.info("Diagnostics uploaded %s → HTTP %s", target, status)
+            elif scheme == "ftp":
+                target = await asyncio.to_thread(
+                    _ftp_upload_sync, location, file_name, content
+                )
+                logger.info("Diagnostics uploaded %s → FTP OK", target)
+            else:
+                logger.warning(
+                    "GetDiagnostics upload supports http(s)/ftp, got %s — local file kept, UploadFailed",
+                    scheme or "(empty)",
+                )
+                await self.send_call(
+                    "DiagnosticsStatusNotification", {"status": "UploadFailed"}
+                )
+                return
+
+            await self.send_call(
+                "DiagnosticsStatusNotification", {"status": "Uploaded"}
+            )
+        except (urllib.error.URLError, urllib.error.HTTPError, OSError, TimeoutError, error_perm) as exc:
+            logger.warning("Diagnostics upload failed: %s (local file may still exist)", exc)
+            try:
+                await self.send_call(
+                    "DiagnosticsStatusNotification", {"status": "UploadFailed"}
+                )
+            except Exception:
+                logger.exception("DiagnosticsStatusNotification UploadFailed failed")
+        except Exception:
+            logger.exception("GetDiagnostics follow-up failed")
+            try:
+                await self.send_call(
+                    "DiagnosticsStatusNotification", {"status": "UploadFailed"}
+                )
+            except Exception:
+                pass
 
     async def _read_loop(self) -> None:
         async for raw in self.ws:
