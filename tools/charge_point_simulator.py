@@ -165,6 +165,7 @@ class Simulator:
         self._energy_wh: dict[int, float] = {}
         self._soc: dict[int, float] = {}
         self._power_w: dict[int, float] = {}
+        self._last_schedule: dict[int, dict[str, Any]] = {}
         self._default_power_w = 7200.0
         self.diagnostics_log_path = setup_simulator_log(charge_point_id)
 
@@ -225,7 +226,36 @@ class Simulator:
         else:
             power_w = limit_f
         self._power_w[connector_id] = max(0.0, power_w)
+        self._last_schedule[connector_id] = schedule if isinstance(schedule, dict) else {}
         return self._power_w[connector_id]
+
+    def _build_composite_schedule(
+        self,
+        connector_id: int,
+        duration: int,
+        charging_rate_unit: str,
+    ) -> dict[str, Any]:
+        stored = self._last_schedule.get(connector_id)
+        if stored:
+            schedule = dict(stored)
+            schedule.setdefault("chargingRateUnit", charging_rate_unit)
+            schedule["duration"] = duration
+            return schedule
+
+        power_w = self._power_for(connector_id)
+        unit = charging_rate_unit.upper()
+        period: dict[str, Any] = {"startPeriod": 0}
+        if unit == "A":
+            phases = 3
+            period["numberPhases"] = phases
+            period["limit"] = round(power_w / (230.0 * phases), 1)
+        else:
+            period["limit"] = power_w
+        return {
+            "duration": duration,
+            "chargingRateUnit": unit,
+            "chargingSchedulePeriod": [period],
+        }
 
     async def send_call(self, action: str, payload: dict) -> dict:
         msg_id = _uid()
@@ -286,6 +316,7 @@ class Simulator:
         self._energy_wh.pop(connector_id, None)
         self._soc.pop(connector_id, None)
         self._power_w.pop(connector_id, None)
+        self._last_schedule.pop(connector_id, None)
         logger.info("StopTransaction OK tx=%s", transaction_id)
 
     async def send_meter_values(self, connector_id: int, transaction_id: int) -> None:
@@ -454,6 +485,34 @@ class Simulator:
                 connector_id,
                 profiles.get("transactionId") if isinstance(profiles, dict) else None,
                 applied,
+            )
+            return
+
+        if action == "GetCompositeSchedule":
+            connector_id = int(payload.get("connectorId") or 1)
+            duration = int(payload.get("duration") or 3600)
+            charging_rate_unit = str(payload.get("chargingRateUnit") or "W").upper()
+            if connector_id <= 0:
+                await self._reply(msg_id, {"status": "Rejected"})
+                logger.info("GetCompositeSchedule → Rejected connector=%s", connector_id)
+                return
+            schedule = self._build_composite_schedule(
+                connector_id, duration, charging_rate_unit
+            )
+            await self._reply(
+                msg_id,
+                {
+                    "status": "Accepted",
+                    "connectorId": connector_id,
+                    "scheduleStart": _now(),
+                    "chargingSchedule": schedule,
+                },
+            )
+            logger.info(
+                "GetCompositeSchedule → Accepted connector=%s duration=%s unit=%s",
+                connector_id,
+                duration,
+                charging_rate_unit,
             )
             return
 

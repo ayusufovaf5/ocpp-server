@@ -264,6 +264,84 @@ class RemoteControlService:
         )
         return response
 
+    async def clear_charging_profile(
+        self,
+        charge_point_id: str,
+        *,
+        id: int | None = None,
+        connector_id: int | None = None,
+        charging_profile_purpose: Literal[
+            "ChargePointMaxProfile", "TxDefaultProfile", "TxProfile"
+        ] | None = None,
+        stack_level: int | None = None,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        if id is not None:
+            payload["id"] = int(id)
+        if connector_id is not None:
+            payload["connectorId"] = int(connector_id)
+        if charging_profile_purpose is not None:
+            payload["chargingProfilePurpose"] = charging_profile_purpose
+        if stack_level is not None:
+            payload["stackLevel"] = int(stack_level)
+        logger.info(
+            "ocpp.clear_charging_profile.send",
+            charge_point_id=charge_point_id,
+            payload=payload,
+        )
+        response = await self.call(
+            charge_point_id,
+            "ClearChargingProfile",
+            payload,
+            timeout_seconds=timeout_seconds,
+        )
+        logger.info(
+            "ocpp.clear_charging_profile.conf",
+            charge_point_id=charge_point_id,
+            status=response.get("status"),
+            response=response,
+        )
+        return response
+
+    async def get_composite_schedule(
+        self,
+        charge_point_id: str,
+        *,
+        connector_id: int,
+        duration: int,
+        charging_rate_unit: Literal["W", "A"] | None = None,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "connectorId": int(connector_id),
+            "duration": int(duration),
+        }
+        if charging_rate_unit is not None:
+            payload["chargingRateUnit"] = charging_rate_unit
+        logger.info(
+            "ocpp.get_composite_schedule.send",
+            charge_point_id=charge_point_id,
+            connector_id=connector_id,
+            duration=duration,
+            charging_rate_unit=charging_rate_unit,
+        )
+        response = await self.call(
+            charge_point_id,
+            "GetCompositeSchedule",
+            payload,
+            timeout_seconds=timeout_seconds,
+        )
+        logger.info(
+            "ocpp.get_composite_schedule.conf",
+            charge_point_id=charge_point_id,
+            connector_id=connector_id,
+            duration=duration,
+            status=response.get("status"),
+            response=response,
+        )
+        return response
+
     async def remote_stop(
         self,
         charge_point_id: str,
@@ -415,7 +493,6 @@ def build_set_charging_profile_payload(
         "chargingRateUnit": charging_rate_unit,
         "chargingSchedulePeriod": [period],
     }
-    # Absolute schedules need an anchor time; many CPs ignore Absolute without it.
     if charging_profile_kind == "Absolute":
         schedule["startSchedule"] = start_schedule or datetime.now(UTC).strftime(
             "%Y-%m-%dT%H:%M:%SZ"

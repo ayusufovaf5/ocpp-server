@@ -66,6 +66,21 @@ class SetChargingProfileRequest(BaseModel):
     charging_profile_id: int | None = None
 
 
+class GetCompositeScheduleRequest(BaseModel):
+    connector_id: int
+    duration: int
+    charging_rate_unit: Literal["W", "A"] | None = None
+
+
+class ClearChargingProfileRequest(BaseModel):
+    id: int | None = None
+    connector_id: int | None = None
+    charging_profile_purpose: Literal[
+        "ChargePointMaxProfile", "TxDefaultProfile", "TxProfile"
+    ] | None = None
+    stack_level: int | None = None
+
+
 def _remote_http_result(coro_result: Any) -> dict[str, Any]:
     return {"status": "success", "response": coro_result}
 
@@ -286,5 +301,39 @@ async def set_charging_profile(
             number_phases=body.number_phases,
             stack_level=body.stack_level,
             charging_profile_id=body.charging_profile_id,
+        )
+    )
+
+
+@router.post("/composite-schedule/{charger_id}")
+async def get_composite_schedule(
+    charger_id: str,
+    body: GetCompositeScheduleRequest,
+    db: AsyncSession = Depends(get_db_session),
+) -> dict[str, Any]:
+    return await _run_remote(
+        lambda: RemoteControlService(db).get_composite_schedule(
+            charger_id,
+            connector_id=body.connector_id,
+            duration=body.duration,
+            charging_rate_unit=body.charging_rate_unit,
+        )
+    )
+
+
+@router.post("/clear-charging-profile/{charger_id}")
+async def clear_charging_profile(
+    charger_id: str,
+    body: ClearChargingProfileRequest | None = None,
+    db: AsyncSession = Depends(get_db_session),
+) -> dict[str, Any]:
+    req = body or ClearChargingProfileRequest()
+    return await _run_remote(
+        lambda: RemoteControlService(db).clear_charging_profile(
+            charger_id,
+            id=req.id,
+            connector_id=req.connector_id,
+            charging_profile_purpose=req.charging_profile_purpose,
+            stack_level=req.stack_level,
         )
     )
