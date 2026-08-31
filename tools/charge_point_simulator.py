@@ -562,7 +562,8 @@ class Simulator:
                 logger.info("Diagnostics uploaded %s → FTP OK", target)
             else:
                 logger.warning(
-                    "GetDiagnostics upload supports http(s)/ftp, got %s — local file kept, UploadFailed",
+                    "GetDiagnostics upload supports http(s)/ftp, got %s — "
+                    "local file kept, UploadFailed",
                     scheme or "(empty)",
                 )
                 await self.send_call(
@@ -573,7 +574,13 @@ class Simulator:
             await self.send_call(
                 "DiagnosticsStatusNotification", {"status": "Uploaded"}
             )
-        except (urllib.error.URLError, urllib.error.HTTPError, OSError, TimeoutError, error_perm) as exc:
+        except (
+            urllib.error.URLError,
+            urllib.error.HTTPError,
+            OSError,
+            TimeoutError,
+            error_perm,
+        ) as exc:
             logger.warning("Diagnostics upload failed: %s (local file may still exist)", exc)
             try:
                 await self.send_call(

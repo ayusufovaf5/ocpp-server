@@ -6,8 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db import get_db_session
 from config import get_settings
+from db import get_db_session
 from services.errors import (
     AmbiguousActiveSessionError,
     ChargerCallError,

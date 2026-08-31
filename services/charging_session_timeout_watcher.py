@@ -1,6 +1,5 @@
-from sqlalchemy.ext.asyncio import AsyncSession
-
 import structlog
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import ChargingSession
 from db.time import seconds_ago, utc_now, utc_now_iso

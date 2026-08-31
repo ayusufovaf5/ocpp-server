@@ -573,9 +573,9 @@ async def test_remote_stop_pending_preparing_without_session(
     await ChargerService(db_session).register_boot(
         charge_point_id=charge_point_id, vendor="V", model="M"
     )
+    from db.time import utc_now
     from repositories.charger_repository import ChargerRepository
     from repositories.connector_status_repository import ConnectorStatusRepository
-    from db.time import utc_now
 
     charger = await ChargerRepository(db_session).get_by_charge_point_id(charge_point_id)
     assert charger is not None

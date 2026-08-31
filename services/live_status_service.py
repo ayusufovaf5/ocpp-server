@@ -10,7 +10,6 @@ from events.evpoint_payload import normalize_status
 from repositories.charger_repository import ChargerRepository
 from repositories.connector_status_repository import ConnectorStatusRepository
 from repositories.session_repository import SessionRepository
-from state.connection_state import get_connection_state
 from services.status import (
     ENERGY_IMPORT_MEASURANDS,
     POWER_IMPORT_MEASURANDS,
@@ -18,7 +17,7 @@ from services.status import (
     pick_latest_meter,
     power_watts_to_kw,
 )
-
+from state.connection_state import get_connection_state
 
 _IN_PROGRESS_STATUSES = {
     "Preparing",
