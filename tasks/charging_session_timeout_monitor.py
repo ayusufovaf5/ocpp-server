@@ -21,9 +21,7 @@ async def run_charging_session_timeout_monitor() -> None:
     while True:
         try:
             async with db_module.async_session_factory() as session:
-                closed = await ChargingSessionTimeoutWatcher(session).close_expired(
-                    timeout_seconds
-                )
+                closed = await ChargingSessionTimeoutWatcher(session).close_expired(timeout_seconds)
                 if closed:
                     logger.info(
                         "charging_session_timeout_monitor.closed_sessions",

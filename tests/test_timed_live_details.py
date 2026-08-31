@@ -195,9 +195,7 @@ async def test_timed_live_details_two_clients_both_see_events(ocpp_http_server, 
                 session.ocpp_transaction_id,
                 available_since=utc_now() - timedelta(seconds=grace + 1),
             )
-            await ChargerService(db_session).update_status(
-                "CP_FANOUT", "Available", connector_id=1
-            )
+            await ChargerService(db_session).update_status("CP_FANOUT", "Available", connector_id=1)
             after_clear = await _read_json_line(lines_b, timeout=5.0)
             chargers = {c["charger_id"]: c for c in after_clear["chargers"]}
             match = next(c for c in chargers["CP_FANOUT"]["connectors"] if c["number"] == 1)

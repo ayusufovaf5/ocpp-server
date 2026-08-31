@@ -75,9 +75,9 @@ class GetCompositeScheduleRequest(BaseModel):
 class ClearChargingProfileRequest(BaseModel):
     id: int | None = None
     connector_id: int | None = None
-    charging_profile_purpose: Literal[
-        "ChargePointMaxProfile", "TxDefaultProfile", "TxProfile"
-    ] | None = None
+    charging_profile_purpose: (
+        Literal["ChargePointMaxProfile", "TxDefaultProfile", "TxProfile"] | None
+    ) = None
     stack_level: int | None = None
 
 

@@ -154,9 +154,7 @@ async def test_live_payload_keeps_transaction_id_during_grace_after_stop(
     assert match["transaction_id"] == session.ocpp_transaction_id
 
     grace = get_settings().evpoint_live_tx_grace_seconds
-    expired = await service.build_timed_live_payload(
-        now=utc_now() + timedelta(seconds=grace + 1)
-    )
+    expired = await service.build_timed_live_payload(now=utc_now() + timedelta(seconds=grace + 1))
     match = next(
         c
         for charger in expired["chargers"]
@@ -184,9 +182,7 @@ async def test_preparing_push_skipped_without_transaction_id(db_session, monkeyp
     await ChargerService(db_session).register_boot(
         charge_point_id="CP_PREP_SKIP", vendor="V", model="M"
     )
-    await ChargerService(db_session).update_status(
-        "CP_PREP_SKIP", "Preparing", connector_id=1
-    )
+    await ChargerService(db_session).update_status("CP_PREP_SKIP", "Preparing", connector_id=1)
 
     assert published == []
 
@@ -235,9 +231,7 @@ async def test_live_payload_includes_pending_transaction_id_while_preparing(
     await ChargerService(db_session).register_boot(
         charge_point_id="CP_LIVE_PREP", vendor="V", model="M"
     )
-    await ChargerService(db_session).update_status(
-        "CP_LIVE_PREP", "Preparing", connector_id=1
-    )
+    await ChargerService(db_session).update_status("CP_LIVE_PREP", "Preparing", connector_id=1)
     await get_connection_state().set_pending_remote_start(
         "CP_LIVE_PREP",
         1,
@@ -279,9 +273,7 @@ async def test_live_payload_finishing_maps_to_available_with_transaction_id(
         timestamp=utc_now_iso(),
         connector_id=1,
     )
-    await ChargerService(db_session).update_status(
-        "CP_LIVE_FIN", "Finishing", connector_id=1
-    )
+    await ChargerService(db_session).update_status("CP_LIVE_FIN", "Finishing", connector_id=1)
 
     payload = await LiveStatusService(db_session).build_timed_live_payload()
     match = next(
@@ -308,9 +300,7 @@ async def test_live_payload_keeps_suspended_ev_with_transaction_id(db_session) -
         timestamp=utc_now_iso(),
     )
     assert session.ocpp_transaction_id is not None
-    await ChargerService(db_session).update_status(
-        "CP_LIVE_SEV", "SuspendedEV", connector_id=1
-    )
+    await ChargerService(db_session).update_status("CP_LIVE_SEV", "SuspendedEV", connector_id=1)
 
     payload = await LiveStatusService(db_session).build_timed_live_payload()
     match = next(
@@ -331,9 +321,7 @@ async def test_live_payload_remaps_stale_charging_without_transaction_id(
     await ChargerService(db_session).register_boot(
         charge_point_id="CP_STALE_CH", vendor="V", model="M"
     )
-    await ChargerService(db_session).update_status(
-        "CP_STALE_CH", "Charging", connector_id=1
-    )
+    await ChargerService(db_session).update_status("CP_STALE_CH", "Charging", connector_id=1)
 
     payload = await LiveStatusService(db_session).build_timed_live_payload()
     match = next(

@@ -29,9 +29,7 @@ async def resolve_connector_transaction_id(
     if charger is None:
         return None
 
-    active = await SessionRepository(db).get_active_by_charger_connector(
-        charger.id, connector_id
-    )
+    active = await SessionRepository(db).get_active_by_charger_connector(charger.id, connector_id)
     if active is not None and active.ocpp_transaction_id is not None:
         return int(active.ocpp_transaction_id)
 

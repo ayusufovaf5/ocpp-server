@@ -131,8 +131,8 @@ async def test_remote_start_offline_returns_404(ocpp_http_server, db_session) ->
     )
 
     async with AsyncClient(
-            base_url=ocpp_http_server["http"],
-        ) as client:
+        base_url=ocpp_http_server["http"],
+    ) as client:
         response = await client.post(
             f"/start/{charge_point_id}",
             json={
@@ -151,8 +151,8 @@ async def test_remote_start_offline_returns_404(ocpp_http_server, db_session) ->
 @pytest.mark.asyncio
 async def test_remote_start_unknown_charger_returns_404(ocpp_http_server) -> None:
     async with AsyncClient(
-            base_url=ocpp_http_server["http"],
-        ) as client:
+        base_url=ocpp_http_server["http"],
+    ) as client:
         response = await client.post(
             "/start/CP_UNKNOWN",
             json={
@@ -488,9 +488,7 @@ async def test_remote_start_stop_full_station_cycle_station_stop_reason(
 
 
 @pytest.mark.asyncio
-async def test_remote_stop_finalizes_and_keeps_tx_for_live(
-    ocpp_http_server, db_session
-) -> None:
+async def test_remote_stop_finalizes_and_keeps_tx_for_live(ocpp_http_server, db_session) -> None:
     """Old EvPointOCPP contract: after RemoteStop, Available + transaction_id grace."""
     charge_point_id = "CP_RSTOP_FINALIZE"
     await ChargerService(db_session).register_boot(
@@ -525,9 +523,7 @@ async def test_remote_stop_finalizes_and_keeps_tx_for_live(
                     if frame[0] == MessageType.CALL and frame[2] == "RemoteStopTransaction":
                         assert frame[3] == {"transactionId": app_charging_id}
                         await ws.send(
-                            json.dumps(
-                                [MessageType.CALLRESULT, frame[1], {"status": "Accepted"}]
-                            )
+                            json.dumps([MessageType.CALLRESULT, frame[1], {"status": "Accepted"}])
                         )
                         return
             except websockets.ConnectionClosed:
@@ -566,9 +562,7 @@ async def test_remote_stop_finalizes_and_keeps_tx_for_live(
 
 
 @pytest.mark.asyncio
-async def test_remote_stop_pending_preparing_without_session(
-    ocpp_http_server, db_session
-) -> None:
+async def test_remote_stop_pending_preparing_without_session(ocpp_http_server, db_session) -> None:
     charge_point_id = "CP_RSTOP_PENDING"
     await ChargerService(db_session).register_boot(
         charge_point_id=charge_point_id, vendor="V", model="M"
@@ -607,9 +601,7 @@ async def test_remote_stop_pending_preparing_without_session(
                     frame = json.loads(await ws.recv())
                     if frame[0] == MessageType.CALL and frame[2] == "RemoteStopTransaction":
                         await ws.send(
-                            json.dumps(
-                                [MessageType.CALLRESULT, frame[1], {"status": "Accepted"}]
-                            )
+                            json.dumps([MessageType.CALLRESULT, frame[1], {"status": "Accepted"}])
                         )
                         return
             except websockets.ConnectionClosed:

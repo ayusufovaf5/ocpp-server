@@ -38,9 +38,7 @@ def test_build_set_charging_profile_payload_tx_absolute_watts() -> None:
             "chargingSchedule": {
                 "chargingRateUnit": "W",
                 "startSchedule": "2026-01-01T00:00:00Z",
-                "chargingSchedulePeriod": [
-                    {"startPeriod": 0, "limit": 7000.0, "numberPhases": 3}
-                ],
+                "chargingSchedulePeriod": [{"startPeriod": 0, "limit": 7000.0, "numberPhases": 3}],
             },
         },
     }
@@ -105,9 +103,7 @@ async def ocpp_http_server(db_engine, unused_tcp_port):
 
 
 @pytest.mark.asyncio
-async def test_set_charging_profile_accepted_via_rest_and_ws(
-    ocpp_http_server, db_session
-) -> None:
+async def test_set_charging_profile_accepted_via_rest_and_ws(ocpp_http_server, db_session) -> None:
     charge_point_id = "CP_SET_PROFILE_OK"
     await ChargerService(db_session).register_boot(
         charge_point_id=charge_point_id, vendor="V", model="M"
@@ -138,9 +134,7 @@ async def test_set_charging_profile_accepted_via_rest_and_ws(
                     if frame[0] == MessageType.CALL and frame[2] == "SetChargingProfile":
                         seen["payload"] = frame[3]
                         await ws.send(
-                            json.dumps(
-                                [MessageType.CALLRESULT, frame[1], {"status": "Accepted"}]
-                            )
+                            json.dumps([MessageType.CALLRESULT, frame[1], {"status": "Accepted"}])
                         )
                         return
             except websockets.ConnectionClosed:
@@ -182,9 +176,7 @@ async def test_set_charging_profile_accepted_via_rest_and_ws(
 
 
 @pytest.mark.asyncio
-async def test_set_charging_profile_rejected_via_rest_and_ws(
-    ocpp_http_server, db_session
-) -> None:
+async def test_set_charging_profile_rejected_via_rest_and_ws(ocpp_http_server, db_session) -> None:
     charge_point_id = "CP_SET_PROFILE_REJ"
     await ChargerService(db_session).register_boot(
         charge_point_id=charge_point_id, vendor="V", model="M"
@@ -212,9 +204,7 @@ async def test_set_charging_profile_rejected_via_rest_and_ws(
                     frame = json.loads(await ws.recv())
                     if frame[0] == MessageType.CALL and frame[2] == "SetChargingProfile":
                         await ws.send(
-                            json.dumps(
-                                [MessageType.CALLRESULT, frame[1], {"status": "Rejected"}]
-                            )
+                            json.dumps([MessageType.CALLRESULT, frame[1], {"status": "Rejected"}])
                         )
                         return
             except websockets.ConnectionClosed:

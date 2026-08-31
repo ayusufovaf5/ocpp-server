@@ -43,9 +43,7 @@ async def _wait_connected(db_session, charge_point_id: str, *, timeout: float = 
 
 
 @pytest.mark.asyncio
-async def test_abrupt_disconnect_mid_transaction(
-    ocpp_ws_server, db_session, connect_cp
-) -> None:
+async def test_abrupt_disconnect_mid_transaction(ocpp_ws_server, db_session, connect_cp) -> None:
     cp = await connect_cp("INT_CP_DISC")
     assert (await cp.boot())["status"] == "Accepted"
     await cp.status(1, "Available")

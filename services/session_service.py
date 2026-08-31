@@ -229,9 +229,7 @@ class SessionService:
             if row is not None and row.status == "Active":
                 latest = await self._sessions.latest_meter_value(row.id)
                 meter_stop = (
-                    int(round(latest.value))
-                    if latest is not None
-                    else int(row.meter_start)
+                    int(round(latest.value)) if latest is not None else int(row.meter_start)
                 )
                 await self._sessions.stop(
                     row,
@@ -256,9 +254,7 @@ class SessionService:
                 ocpp_transaction_id,
             )
             await get_connection_state().clear_active_session(charge_point_id, connector_id)
-            await get_connection_state().take_pending_remote_start(
-                charge_point_id, connector_id
-            )
+            await get_connection_state().take_pending_remote_start(charge_point_id, connector_id)
             await get_connection_state().set_connector_status(
                 charge_point_id, connector_id, "Available"
             )

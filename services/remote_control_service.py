@@ -270,9 +270,8 @@ class RemoteControlService:
         *,
         id: int | None = None,
         connector_id: int | None = None,
-        charging_profile_purpose: Literal[
-            "ChargePointMaxProfile", "TxDefaultProfile", "TxProfile"
-        ] | None = None,
+        charging_profile_purpose: Literal["ChargePointMaxProfile", "TxDefaultProfile", "TxProfile"]
+        | None = None,
         stack_level: int | None = None,
         timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
@@ -393,9 +392,7 @@ class RemoteControlService:
             if active is None:
                 raise NoActiveSessionError(charge_point_id, connector_id=connector_id)
 
-        resolved_connector_id = (
-            active.connector_id if active is not None else pending_connector_id
-        )
+        resolved_connector_id = active.connector_id if active is not None else pending_connector_id
         assert resolved_connector_id is not None
 
         station_tx_id: int | None = None
@@ -404,11 +401,7 @@ class RemoteControlService:
         elif transaction_id > 0:
             station_tx_id = int(transaction_id)
 
-        live_tx_id = (
-            int(transaction_id)
-            if transaction_id > 0
-            else int(station_tx_id or 0)
-        )
+        live_tx_id = int(transaction_id) if transaction_id > 0 else int(station_tx_id or 0)
         if live_tx_id <= 0 and active is not None and active.ocpp_transaction_id is not None:
             live_tx_id = int(active.ocpp_transaction_id)
         if live_tx_id <= 0:
@@ -460,9 +453,7 @@ class RemoteControlService:
         for row in rows:
             if row.connector_id == 0:
                 continue
-            pending = await state.peek_pending_remote_start(
-                charge_point_id, row.connector_id
-            )
+            pending = await state.peek_pending_remote_start(charge_point_id, row.connector_id)
             if pending is not None and pending.transaction_id == transaction_id:
                 return int(row.connector_id)
         return None

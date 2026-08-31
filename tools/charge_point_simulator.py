@@ -83,9 +83,7 @@ def _parse_iso_utc(value: Any) -> datetime | None:
         return None
 
 
-def read_diagnostics_log(
-    log_path: Path, start_time: Any = None, stop_time: Any = None
-) -> str:
+def read_diagnostics_log(log_path: Path, start_time: Any = None, stop_time: Any = None) -> str:
     if not log_path.exists():
         return f"No diagnostics log found at {log_path}\n"
 
@@ -114,10 +112,7 @@ def read_diagnostics_log(
         filtered.append(line)
 
     if not filtered:
-        return (
-            f"No log entries in range "
-            f"startTime={start_time} stopTime={stop_time}\n"
-        )
+        return f"No log entries in range startTime={start_time} stopTime={stop_time}\n"
     return "".join(filtered)
 
 
@@ -385,9 +380,7 @@ class Simulator:
                     self._energy_wh[connector_id] = (
                         self._energy_wh.get(connector_id, 0.0) + wh_per_tick
                     )
-                    self._soc[connector_id] = min(
-                        100.0, self._soc.get(connector_id, 20.0) + 0.15
-                    )
+                    self._soc[connector_id] = min(100.0, self._soc.get(connector_id, 20.0) + 0.15)
             except asyncio.CancelledError:
                 return
 
@@ -496,9 +489,7 @@ class Simulator:
                 await self._reply(msg_id, {"status": "Rejected"})
                 logger.info("GetCompositeSchedule → Rejected connector=%s", connector_id)
                 return
-            schedule = self._build_composite_schedule(
-                connector_id, duration, charging_rate_unit
-            )
+            schedule = self._build_composite_schedule(connector_id, duration, charging_rate_unit)
             await self._reply(
                 msg_id,
                 {
@@ -527,13 +518,9 @@ class Simulator:
         await self._reply(msg_id, {"status": "Accepted"})
         logger.info("Unhandled inbound %s → Accepted stub", action)
 
-    async def _upload_diagnostics(
-        self, location: str, file_name: str, req: dict
-    ) -> None:
+    async def _upload_diagnostics(self, location: str, file_name: str, req: dict) -> None:
         try:
-            await self.send_call(
-                "DiagnosticsStatusNotification", {"status": "Uploading"}
-            )
+            await self.send_call("DiagnosticsStatusNotification", {"status": "Uploading"})
             text = read_diagnostics_log(
                 self.diagnostics_log_path,
                 start_time=req.get("startTime"),
@@ -556,9 +543,7 @@ class Simulator:
                 status = await asyncio.to_thread(_http_put_sync, target, content)
                 logger.info("Diagnostics uploaded %s → HTTP %s", target, status)
             elif scheme == "ftp":
-                target = await asyncio.to_thread(
-                    _ftp_upload_sync, location, file_name, content
-                )
+                target = await asyncio.to_thread(_ftp_upload_sync, location, file_name, content)
                 logger.info("Diagnostics uploaded %s → FTP OK", target)
             else:
                 logger.warning(
@@ -566,14 +551,10 @@ class Simulator:
                     "local file kept, UploadFailed",
                     scheme or "(empty)",
                 )
-                await self.send_call(
-                    "DiagnosticsStatusNotification", {"status": "UploadFailed"}
-                )
+                await self.send_call("DiagnosticsStatusNotification", {"status": "UploadFailed"})
                 return
 
-            await self.send_call(
-                "DiagnosticsStatusNotification", {"status": "Uploaded"}
-            )
+            await self.send_call("DiagnosticsStatusNotification", {"status": "Uploaded"})
         except (
             urllib.error.URLError,
             urllib.error.HTTPError,
@@ -583,17 +564,13 @@ class Simulator:
         ) as exc:
             logger.warning("Diagnostics upload failed: %s (local file may still exist)", exc)
             try:
-                await self.send_call(
-                    "DiagnosticsStatusNotification", {"status": "UploadFailed"}
-                )
+                await self.send_call("DiagnosticsStatusNotification", {"status": "UploadFailed"})
             except Exception:
                 logger.exception("DiagnosticsStatusNotification UploadFailed failed")
         except Exception:
             logger.exception("GetDiagnostics follow-up failed")
             try:
-                await self.send_call(
-                    "DiagnosticsStatusNotification", {"status": "UploadFailed"}
-                )
+                await self.send_call("DiagnosticsStatusNotification", {"status": "UploadFailed"})
             except Exception:
                 pass
 

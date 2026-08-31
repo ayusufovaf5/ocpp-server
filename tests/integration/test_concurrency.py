@@ -10,9 +10,7 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.mark.asyncio
-async def test_concurrent_charge_points_isolated(
-    ocpp_ws_server, db_engine, connect_cp
-) -> None:
+async def test_concurrent_charge_points_isolated(ocpp_ws_server, db_engine, connect_cp) -> None:
     cp_a = await connect_cp("INT_CP_A")
     cp_b = await connect_cp("INT_CP_B")
 

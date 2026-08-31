@@ -93,11 +93,7 @@ class LiveStatusService:
         power = pick_latest_meter(meters, POWER_IMPORT_MEASURANDS)
         latest_wh = None if energy is None else float(energy.value)
         battery = None if soc is None else float(soc.value)
-        speed = (
-            None
-            if power is None
-            else power_watts_to_kw(float(power.value), power.unit)
-        )
+        speed = None if power is None else power_watts_to_kw(float(power.value), power.unit)
         return latest_wh, battery, speed
 
     async def _resolve_transaction_id(
